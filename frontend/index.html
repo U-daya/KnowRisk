@@ -1,0 +1,1311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KnowRisk — Semiconductor Supply-Chain Risk Analyzer</title>
+  <meta name="description" content="AI-powered semiconductor supply chain risk analyzer using AMD MI300X GPU and ROCm LLM inference. Real-time risk scoring, geopolitical exposure analysis, and actionable mitigation recommendations." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ─── Design Tokens ─────────────────────────────────────────── */
+    :root {
+      --amd-red:        #E8003D;
+      --amd-red-dark:   #B0002E;
+      --amd-red-glow:   rgba(232,0,61,0.25);
+      --bg-0:           #0A0B0F;
+      --bg-1:           #10121A;
+      --bg-2:           #161925;
+      --bg-3:           #1E2230;
+      --bg-card:        rgba(22,25,37,0.85);
+      --border:         rgba(255,255,255,0.08);
+      --border-active:  rgba(232,0,61,0.5);
+      --text-primary:   #F0F2FF;
+      --text-secondary: #8A91B4;
+      --text-muted:     #4E5470;
+      --risk-critical:  #FF3B3B;
+      --risk-high:      #FF8C00;
+      --risk-medium:    #F5C518;
+      --risk-low:       #22C55E;
+      --risk-crit-bg:   rgba(255,59,59,0.12);
+      --risk-high-bg:   rgba(255,140,0,0.12);
+      --risk-med-bg:    rgba(245,197,24,0.12);
+      --risk-low-bg:    rgba(34,197,94,0.12);
+      --accent-blue:    #4F8EF7;
+      --accent-purple:  #9B7EFF;
+      --radius-sm:      6px;
+      --radius-md:      10px;
+      --radius-lg:      16px;
+      --shadow-card:    0 4px 24px rgba(0,0,0,0.4);
+      --shadow-glow:    0 0 40px rgba(232,0,61,0.15);
+      --transition:     cubic-bezier(0.4,0,0.2,1);
+    }
+
+    /* ─── Reset & Base ──────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { font-size: 14px; scroll-behavior: smooth; }
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: var(--bg-0);
+      color: var(--text-primary);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+    a { color: inherit; text-decoration: none; }
+    button { cursor: pointer; font-family: inherit; border: none; outline: none; }
+    input, textarea { font-family: inherit; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg-1); }
+    ::-webkit-scrollbar-thumb { background: var(--bg-3); border-radius: 99px; }
+
+    /* ─── Demo Banner ───────────────────────────────────────────── */
+    #demo-banner {
+      display: none;
+      background: linear-gradient(90deg, #7C3AED, #4F46E5);
+      color: #fff;
+      text-align: center;
+      padding: 8px 16px;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      position: relative;
+      z-index: 100;
+    }
+    #demo-banner.visible { display: block; }
+
+    /* ─── Top Nav ───────────────────────────────────────────────── */
+    .topnav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      height: 56px;
+      background: rgba(10,11,15,0.95);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(12px);
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+    .nav-logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .nav-logo-icon {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, var(--amd-red), #FF6B35);
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      box-shadow: var(--shadow-glow);
+    }
+    .nav-logo-text {
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+    }
+    .nav-logo-text span { color: var(--amd-red); }
+    .nav-subtitle {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 1px;
+    }
+    .nav-pills {
+      display: flex;
+      gap: 6px;
+    }
+    .nav-pill {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 12px;
+      border-radius: 99px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+      background: var(--bg-2);
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+      transition: all 0.2s var(--transition);
+    }
+    .nav-pill.amd {
+      background: rgba(232,0,61,0.12);
+      border-color: var(--amd-red-glow);
+      color: var(--amd-red);
+    }
+    .nav-pill .dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.8); }
+    }
+
+    /* ─── Layout ────────────────────────────────────────────────── */
+    .main-layout {
+      display: grid;
+      grid-template-columns: 300px 1fr 360px;
+      grid-template-rows: 1fr;
+      height: calc(100vh - 56px);
+      gap: 0;
+    }
+    @media (max-width: 1200px) {
+      .main-layout { grid-template-columns: 260px 1fr; }
+      .right-panel { display: none; }
+    }
+
+    /* ─── Sidebar ───────────────────────────────────────────────── */
+    .sidebar {
+      background: var(--bg-1);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .sidebar-header {
+      padding: 16px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .sidebar-title {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+    .search-box {
+      position: relative;
+    }
+    .search-box input {
+      width: 100%;
+      background: var(--bg-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 8px 12px 8px 32px;
+      color: var(--text-primary);
+      font-size: 12px;
+      transition: border-color 0.2s;
+    }
+    .search-box input:focus {
+      outline: none;
+      border-color: var(--amd-red);
+    }
+    .search-box input::placeholder { color: var(--text-muted); }
+    .search-icon {
+      position: absolute;
+      left: 10px; top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-muted);
+      font-size: 13px;
+      pointer-events: none;
+    }
+    .filter-pills {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+    .filter-pill {
+      padding: 3px 8px;
+      border-radius: 99px;
+      font-size: 10px;
+      font-weight: 600;
+      border: 1px solid transparent;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .filter-pill.all   { background: var(--amd-red); color: #fff; }
+    .filter-pill.t1    { background: rgba(255,59,59,0.15); color: var(--risk-critical); border-color: rgba(255,59,59,0.3); }
+    .filter-pill.t2    { background: rgba(255,140,0,0.15); color: var(--risk-high); border-color: rgba(255,140,0,0.3); }
+    .filter-pill.t3    { background: rgba(34,197,94,0.15); color: var(--risk-low); border-color: rgba(34,197,94,0.3); }
+    .filter-pill:not(.all):hover { filter: brightness(1.2); }
+    .component-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+    }
+    .component-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      transition: all 0.15s var(--transition);
+      border: 1px solid transparent;
+      margin-bottom: 2px;
+    }
+    .component-item:hover {
+      background: var(--bg-2);
+      border-color: var(--border);
+    }
+    .component-item.active {
+      background: rgba(232,0,61,0.08);
+      border-color: var(--border-active);
+    }
+    .comp-risk-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .comp-info { flex: 1; min-width: 0; }
+    .comp-name {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .comp-meta {
+      font-size: 10px;
+      color: var(--text-muted);
+      margin-top: 1px;
+    }
+    .comp-score {
+      font-size: 11px;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+      flex-shrink: 0;
+    }
+
+    /* ─── Center Panel ──────────────────────────────────────────── */
+    .center-panel {
+      background: var(--bg-0);
+      overflow-y: auto;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    /* ─── Welcome / empty state ─────────────────────────────────── */
+    .empty-state {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      text-align: center;
+      padding: 48px;
+    }
+    .empty-icon {
+      font-size: 56px;
+      animation: float 3s ease-in-out infinite;
+    }
+    @keyframes float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-8px); }
+    }
+    .empty-title {
+      font-size: 22px;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--text-primary), var(--amd-red));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .empty-sub { font-size: 14px; color: var(--text-secondary); max-width: 380px; }
+
+    /* ─── Card ──────────────────────────────────────────────────── */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 20px;
+      box-shadow: var(--shadow-card);
+      backdrop-filter: blur(8px);
+    }
+    .card-title {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* ─── Risk Header Card ──────────────────────────────────────── */
+    .risk-header {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 20px;
+      align-items: center;
+    }
+    .risk-component-name {
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      line-height: 1.2;
+    }
+    .risk-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 9px;
+      border-radius: 99px;
+      font-size: 10px;
+      font-weight: 600;
+      border: 1px solid;
+    }
+    .badge-tier  { background: rgba(79,142,247,0.1); color: var(--accent-blue); border-color: rgba(79,142,247,0.3); }
+    .badge-ss    { background: rgba(255,59,59,0.1); color: var(--risk-critical); border-color: rgba(255,59,59,0.3); }
+    .badge-ec    { background: rgba(255,140,0,0.1); color: var(--risk-high); border-color: rgba(255,140,0,0.3); }
+    .badge-country { background: rgba(155,126,255,0.1); color: var(--accent-purple); border-color: rgba(155,126,255,0.3); }
+    .badge-lead  { background: rgba(138,145,180,0.1); color: var(--text-secondary); border-color: rgba(138,145,180,0.2); }
+
+    /* ─── Risk Gauge ────────────────────────────────────────────── */
+    .gauge-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+    .gauge-svg { overflow: visible; }
+    .gauge-value {
+      font-size: 28px;
+      font-weight: 800;
+      font-family: 'JetBrains Mono', monospace;
+      text-anchor: middle;
+      dominant-baseline: middle;
+    }
+    .gauge-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    /* ─── Feature Bars ──────────────────────────────────────────── */
+    .feature-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .feature-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .feature-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+    .feature-label span:last-child {
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+    .feature-bar-track {
+      height: 5px;
+      background: var(--bg-3);
+      border-radius: 99px;
+      overflow: hidden;
+    }
+    .feature-bar-fill {
+      height: 100%;
+      border-radius: 99px;
+      transition: width 0.8s var(--transition);
+      background: linear-gradient(90deg, var(--accent-blue), var(--amd-red));
+    }
+
+    /* ─── LLM Explanation Card ──────────────────────────────────── */
+    .llm-card {
+      position: relative;
+      overflow: hidden;
+    }
+    .llm-card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg,
+        rgba(232,0,61,0.04) 0%,
+        transparent 60%);
+      pointer-events: none;
+    }
+    .llm-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 10px;
+      background: rgba(79,142,247,0.1);
+      border: 1px solid rgba(79,142,247,0.25);
+      border-radius: 99px;
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--accent-blue);
+      margin-bottom: 12px;
+    }
+    .llm-chip .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent-blue); animation: pulse 1.5s infinite; }
+    .llm-text {
+      font-size: 13.5px;
+      line-height: 1.75;
+      color: var(--text-secondary);
+    }
+    .llm-text.loading {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-muted);
+    }
+    .spinner {
+      width: 16px; height: 16px;
+      border: 2px solid var(--border);
+      border-top-color: var(--amd-red);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      flex-shrink: 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ─── Dependencies Card ─────────────────────────────────────── */
+    .dep-list { display: flex; flex-direction: column; gap: 8px; }
+    .dep-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      background: var(--bg-2);
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      transition: border-color 0.15s;
+      cursor: pointer;
+    }
+    .dep-item:hover { border-color: var(--border-active); }
+    .dep-flag {
+      width: 28px; height: 28px;
+      background: var(--bg-3);
+      border-radius: var(--radius-sm);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+    .dep-info { flex: 1; min-width: 0; }
+    .dep-name { font-size: 12px; font-weight: 500; }
+    .dep-country { font-size: 10px; color: var(--text-muted); }
+    .dep-score {
+      font-size: 12px;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* ─── Metrics Row ───────────────────────────────────────────── */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+    }
+    .metric-card {
+      background: var(--bg-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 16px;
+      text-align: center;
+      transition: border-color 0.2s;
+    }
+    .metric-card:hover { border-color: rgba(232,0,61,0.4); }
+    .metric-value {
+      font-size: 26px;
+      font-weight: 800;
+      font-family: 'JetBrains Mono', monospace;
+      background: linear-gradient(135deg, var(--text-primary), var(--amd-red));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .metric-label {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+    .metric-sub { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+
+    /* ─── Right Panel ───────────────────────────────────────────── */
+    .right-panel {
+      background: var(--bg-1);
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .right-panel-header {
+      padding: 16px;
+      border-bottom: 1px solid var(--border);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+    .query-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .chat-bubble {
+      padding: 10px 14px;
+      border-radius: var(--radius-md);
+      font-size: 12.5px;
+      line-height: 1.6;
+      animation: fadeUp 0.3s var(--transition);
+    }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .chat-bubble.user {
+      background: rgba(232,0,61,0.1);
+      border: 1px solid rgba(232,0,61,0.2);
+      color: var(--text-primary);
+      align-self: flex-end;
+      max-width: 90%;
+    }
+    .chat-bubble.assistant {
+      background: var(--bg-2);
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+      align-self: flex-start;
+      max-width: 95%;
+    }
+    .chat-bubble.assistant.loading {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-muted);
+    }
+    .query-input-area {
+      padding: 12px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .query-input-area textarea {
+      width: 100%;
+      background: var(--bg-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 10px 12px;
+      color: var(--text-primary);
+      font-size: 12.5px;
+      line-height: 1.5;
+      resize: none;
+      height: 72px;
+      transition: border-color 0.2s;
+    }
+    .query-input-area textarea:focus {
+      outline: none;
+      border-color: var(--amd-red);
+    }
+    .query-input-area textarea::placeholder { color: var(--text-muted); }
+    .query-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 10px;
+      background: var(--amd-red);
+      color: #fff;
+      border-radius: var(--radius-md);
+      font-size: 12px;
+      font-weight: 600;
+      transition: all 0.2s var(--transition);
+      box-shadow: 0 2px 12px rgba(232,0,61,0.3);
+    }
+    .query-btn:hover { background: var(--amd-red-dark); transform: translateY(-1px); box-shadow: 0 4px 20px rgba(232,0,61,0.4); }
+    .query-btn:active { transform: translateY(0); }
+    .query-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+    .quick-queries {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .quick-q {
+      padding: 3px 8px;
+      background: var(--bg-2);
+      border: 1px solid var(--border);
+      border-radius: 99px;
+      font-size: 10px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .quick-q:hover { border-color: var(--amd-red); color: var(--text-primary); }
+
+    /* ─── Risk color helpers ─────────────────────────────────────── */
+    .rc-CRITICAL { color: var(--risk-critical); }
+    .rc-HIGH     { color: var(--risk-high); }
+    .rc-MEDIUM   { color: var(--risk-medium); }
+    .rc-LOW      { color: var(--risk-low); }
+    .rb-CRITICAL { background: var(--risk-crit-bg); border-color: rgba(255,59,59,0.3); }
+    .rb-HIGH     { background: var(--risk-high-bg); border-color: rgba(255,140,0,0.3); }
+    .rb-MEDIUM   { background: var(--risk-med-bg);  border-color: rgba(245,197,24,0.3); }
+    .rb-LOW      { background: var(--risk-low-bg);  border-color: rgba(34,197,94,0.3); }
+
+    /* ─── Loading skeleton ──────────────────────────────────────── */
+    .skeleton {
+      background: linear-gradient(90deg, var(--bg-2) 25%, var(--bg-3) 50%, var(--bg-2) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+      border-radius: var(--radius-sm);
+    }
+    @keyframes shimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+
+    /* ─── Top summary bar (inside center) ───────────────────────── */
+    .summary-bar {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+    }
+    .summary-stat {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .summary-icon {
+      width: 36px; height: 36px;
+      border-radius: var(--radius-sm);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+    .summary-stat-value { font-size: 22px; font-weight: 800; font-family: 'JetBrains Mono', monospace; }
+    .summary-stat-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 1px; }
+
+    /* ─── Country flag helper ───────────────────────────────────── */
+    /* Simple Unicode flag mapping */
+  </style>
+</head>
+<body>
+
+<!-- Demo mode banner -->
+<div id="demo-banner">
+  ⚡ DEMO MODE — Backend not reachable. Showing bundled sample data. Start backend/app.py to enable live LLM analysis.
+</div>
+
+<!-- Top navigation -->
+<nav class="topnav">
+  <div class="nav-logo">
+    <div class="nav-logo-icon">⚡</div>
+    <div>
+      <div class="nav-logo-text">Know<span>Risk</span></div>
+      <div class="nav-subtitle">Semiconductor Supply-Chain Intelligence</div>
+    </div>
+  </div>
+  <div class="nav-pills">
+    <div class="nav-pill amd">
+      <span class="dot"></span>
+      AMD MI300X · ROCm
+    </div>
+    <div class="nav-pill" id="model-pill">Loading model…</div>
+    <div class="nav-pill" id="data-source-pill">Checking data…</div>
+  </div>
+</nav>
+
+<!-- Main 3-column layout -->
+<div class="main-layout">
+
+  <!-- ── Left: Component List ──────────────────────────────── -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-title">🏭 Supplier Components</div>
+      <div class="search-box">
+        <span class="search-icon">🔍</span>
+        <input id="search-input" type="text" placeholder="Search components…" autocomplete="off" />
+      </div>
+      <div class="filter-pills">
+        <button class="filter-pill all" data-tier="all" onclick="filterByTier('all')">All</button>
+        <button class="filter-pill t1" data-tier="1" onclick="filterByTier('1')">Tier 1</button>
+        <button class="filter-pill t2" data-tier="2" onclick="filterByTier('2')">Tier 2</button>
+        <button class="filter-pill t3" data-tier="3" onclick="filterByTier('3')">Tier 3</button>
+      </div>
+    </div>
+    <div class="component-list" id="component-list">
+      <!-- Populated by JS -->
+      <div style="padding:16px; color:var(--text-muted); font-size:12px;">Loading components…</div>
+    </div>
+  </aside>
+
+  <!-- ── Center: Risk Analysis ─────────────────────────────── -->
+  <main class="center-panel" id="center-panel">
+
+    <!-- Summary stats (always visible) -->
+    <div class="summary-bar" id="summary-bar" style="display:none">
+      <div class="summary-stat">
+        <div class="summary-icon" style="background:rgba(255,59,59,0.15)">🚨</div>
+        <div>
+          <div class="summary-stat-value rc-CRITICAL" id="stat-critical">—</div>
+          <div class="summary-stat-label">Critical Risk</div>
+        </div>
+      </div>
+      <div class="summary-stat">
+        <div class="summary-icon" style="background:rgba(255,140,0,0.15)">⚠️</div>
+        <div>
+          <div class="summary-stat-value rc-HIGH" id="stat-single-source">—</div>
+          <div class="summary-stat-label">Single-Source</div>
+        </div>
+      </div>
+      <div class="summary-stat">
+        <div class="summary-icon" style="background:rgba(232,0,61,0.15)">🛡️</div>
+        <div>
+          <div class="summary-stat-value" id="stat-export-ctrl" style="color:var(--accent-blue)">—</div>
+          <div class="summary-stat-label">Export Controlled</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Welcome / empty state -->
+    <div class="empty-state" id="empty-state">
+      <div class="empty-icon">🔬</div>
+      <div class="empty-title">Select a Component to Analyze</div>
+      <div class="empty-sub">
+        Choose any supplier component from the left panel to run AI-powered
+        risk scoring using the AMD MI300X GPU and local LLM inference.
+      </div>
+    </div>
+
+    <!-- Risk analysis (hidden until component selected) -->
+    <div id="risk-content" style="display:none; display:flex; flex-direction:column; gap:20px;">
+
+      <!-- Risk header -->
+      <div class="card">
+        <div class="risk-header">
+          <div>
+            <div class="risk-component-name" id="rc-name">—</div>
+            <div class="risk-badges" id="rc-badges"></div>
+          </div>
+          <div class="gauge-wrap">
+            <svg class="gauge-svg" width="120" height="70" viewBox="0 0 120 70">
+              <defs>
+                <linearGradient id="gaugeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%"   stop-color="#22C55E"/>
+                  <stop offset="40%"  stop-color="#F5C518"/>
+                  <stop offset="70%"  stop-color="#FF8C00"/>
+                  <stop offset="100%" stop-color="#FF3B3B"/>
+                </linearGradient>
+              </defs>
+              <!-- Track arc -->
+              <path d="M 10 65 A 50 50 0 0 1 110 65"
+                    fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="10" stroke-linecap="round"/>
+              <!-- Value arc -->
+              <path id="gauge-arc" d="M 10 65 A 50 50 0 0 1 110 65"
+                    fill="none" stroke="url(#gaugeGrad)" stroke-width="10"
+                    stroke-linecap="round" stroke-dasharray="157" stroke-dashoffset="157"
+                    style="transition: stroke-dashoffset 1s cubic-bezier(0.4,0,0.2,1)"/>
+              <!-- Center value -->
+              <text id="gauge-text" x="60" y="58" class="gauge-value" fill="white" font-size="18" font-weight="800" text-anchor="middle">—</text>
+            </svg>
+            <div class="gauge-label" id="gauge-label-text" style="color:var(--text-muted)">RISK SCORE</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Feature importance bars -->
+      <div class="card">
+        <div class="card-title">📊 Risk Factor Breakdown</div>
+        <div class="feature-grid" id="feature-grid">
+          <!-- populated by JS -->
+        </div>
+      </div>
+
+      <!-- LLM Explanation -->
+      <div class="card llm-card">
+        <div class="card-title">🤖 AI Risk Analysis</div>
+        <div class="llm-chip"><span class="dot"></span> <span id="llm-model-label">Local LLM · AMD ROCm</span></div>
+        <div class="llm-text" id="llm-text">
+          <span style="color:var(--text-muted)">Select a component to generate an AI-powered risk assessment.</span>
+        </div>
+      </div>
+
+      <!-- Upstream dependencies -->
+      <div class="card" id="dep-card" style="display:none">
+        <div class="card-title">🔗 Upstream Dependencies</div>
+        <div class="dep-list" id="dep-list"></div>
+      </div>
+
+      <!-- Model metrics -->
+      <div class="card" id="metrics-card" style="display:none">
+        <div class="card-title">🧠 Classifier Performance · DataCo Dataset</div>
+        <div class="metrics-grid">
+          <div class="metric-card">
+            <div class="metric-value" id="m-accuracy">—</div>
+            <div class="metric-label">Accuracy</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-value" id="m-f1">—</div>
+            <div class="metric-label">F1 Score</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-value" id="m-auc">—</div>
+            <div class="metric-label">ROC-AUC</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-value" id="m-samples">—</div>
+            <div class="metric-label">Samples</div>
+          </div>
+        </div>
+        <div style="margin-top:10px;font-size:11px;color:var(--text-muted)" id="m-source"></div>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- ── Right: Q&A Chat ──────────────────────────────────── -->
+  <aside class="right-panel">
+    <div class="right-panel-header">💬 Supply-Chain Q&amp;A</div>
+    <div class="query-area" id="chat-area">
+      <div class="chat-bubble assistant">
+        Ask me anything about semiconductor supply-chain risks, geopolitical exposure, export controls, or specific components.
+      </div>
+    </div>
+    <div class="query-input-area">
+      <div class="quick-queries">
+        <button class="quick-q" onclick="fillQuery('What are the top risks in Taiwan-sourced components?')">Taiwan risks</button>
+        <button class="quick-q" onclick="fillQuery('Explain EUV lithography supply chain concentration')">EUV supply</button>
+        <button class="quick-q" onclick="fillQuery('How do export controls affect HBM memory sourcing?')">HBM controls</button>
+        <button class="quick-q" onclick="fillQuery('What is single-source risk and how to mitigate it?')">Single-source</button>
+      </div>
+      <textarea id="query-input" placeholder="Ask about supply chain risks…" rows="3"></textarea>
+      <button class="query-btn" id="query-btn" onclick="submitQuery()">
+        <span>⚡</span> Analyze with AI
+      </button>
+    </div>
+  </aside>
+
+</div>
+
+<script>
+/* ───────────────────────────────────────────────────────────────
+   KnowRisk Frontend — Vanilla JS
+   ─────────────────────────────────────────────────────────────── */
+
+const API = '';  // same-origin
+let allComponents = [];
+let currentTierFilter = 'all';
+let currentComponentId = null;
+let demoMode = false;
+
+// ── Country → flag emoji ──────────────────────────────────────
+const FLAG = {
+  'Taiwan':      '🇹🇼',
+  'South Korea': '🇰🇷',
+  'Japan':       '🇯🇵',
+  'Netherlands': '🇳🇱',
+  'USA':         '🇺🇸',
+  'China':       '🇨🇳',
+  'Germany':     '🇩🇪',
+  'Malaysia':    '🇲🇾',
+  'Vietnam':     '🇻🇳',
+  'Israel':      '🇮🇱',
+};
+
+const RISK_COLOR = {
+  CRITICAL: 'var(--risk-critical)',
+  HIGH:     'var(--risk-high)',
+  MEDIUM:   'var(--risk-medium)',
+  LOW:      'var(--risk-low)',
+};
+
+// ── Feature labels ──────────────────────────────────────────
+const FEATURE_LABELS = {
+  market_geo_risk:      'Geographic Risk',
+  late_delivery_risk:   'Single-Source Vulnerability',
+  high_discount_flag:   'Export Control Exposure',
+  order_status_risk:    'Geopolitical Exposure',
+  shipping_mode_risk:   'Transit Risk',
+  product_price_log:    'Component Criticality',
+  shipping_delay_days:  'Lead-Time Pressure',
+  category_risk:        'Category Risk',
+};
+
+// ── Bundled demo data (shown when backend unreachable) ──────
+const DEMO_COMPONENTS = [
+  {id:'COMP-001',name:'Advanced Logic Die',category:'Semiconductor',tier:1,country:'Taiwan',single_source:true,export_controlled:false,lead_time_days:180,risk_score:0.82,risk_label:'CRITICAL',n_dependencies:2},
+  {id:'COMP-002',name:'HBM3 Memory Stack',category:'Memory',tier:1,country:'South Korea',single_source:true,export_controlled:true,lead_time_days:120,risk_score:0.71,risk_label:'CRITICAL',n_dependencies:1},
+  {id:'COMP-003',name:'EUV Photomask',category:'Photonics',tier:1,country:'Netherlands',single_source:true,export_controlled:true,lead_time_days:200,risk_score:0.68,risk_label:'HIGH',n_dependencies:0},
+  {id:'COMP-004',name:'Advanced Packaging Substrate',category:'Substrate',tier:1,country:'Taiwan',single_source:true,export_controlled:false,lead_time_days:150,risk_score:0.75,risk_label:'CRITICAL',n_dependencies:3},
+  {id:'COMP-005',name:'Lithography System',category:'Equipment',tier:1,country:'Netherlands',single_source:true,export_controlled:true,lead_time_days:400,risk_score:0.79,risk_label:'CRITICAL',n_dependencies:0},
+  {id:'COMP-006',name:'Silicon Wafer (300mm)',category:'Materials',tier:1,country:'Japan',single_source:false,export_controlled:false,lead_time_days:60,risk_score:0.38,risk_label:'MEDIUM',n_dependencies:0},
+  {id:'COMP-007',name:'Rare Earth Magnets',category:'Materials',tier:2,country:'China',single_source:true,export_controlled:false,lead_time_days:45,risk_score:0.62,risk_label:'HIGH',n_dependencies:1},
+  {id:'COMP-008',name:'PCB (Multi-layer)',category:'PCB',tier:3,country:'China',single_source:false,export_controlled:false,lead_time_days:21,risk_score:0.25,risk_label:'LOW',n_dependencies:2},
+  {id:'COMP-009',name:'Custom ASIC (AI Engine)',category:'Semiconductor',tier:1,country:'Taiwan',single_source:true,export_controlled:true,lead_time_days:210,risk_score:0.88,risk_label:'CRITICAL',n_dependencies:3},
+  {id:'COMP-010',name:'Photoresist (EUV-grade)',category:'Chemicals',tier:1,country:'Japan',single_source:true,export_controlled:false,lead_time_days:120,risk_score:0.58,risk_label:'HIGH',n_dependencies:0},
+];
+
+// ── Init ─────────────────────────────────────────────────────
+async function init() {
+  await loadComponents();
+  await loadMetrics();
+  setupSearch();
+}
+
+// ── Load components ──────────────────────────────────────────
+async function loadComponents() {
+  try {
+    const res = await fetch(`${API}/api/components`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    allComponents = await res.json();
+    document.getElementById('summary-bar').style.display = 'grid';
+    updateSummaryStats();
+    renderComponentList();
+  } catch (e) {
+    console.warn('Backend unreachable, using demo data:', e.message);
+    demoMode = true;
+    document.getElementById('demo-banner').classList.add('visible');
+    allComponents = DEMO_COMPONENTS;
+    document.getElementById('summary-bar').style.display = 'grid';
+    updateSummaryStats();
+    renderComponentList();
+  }
+}
+
+function updateSummaryStats() {
+  const critical = allComponents.filter(c => c.risk_label === 'CRITICAL').length;
+  const singleSrc = allComponents.filter(c => c.single_source).length;
+  const exportCtrl = allComponents.filter(c => c.export_controlled).length;
+  document.getElementById('stat-critical').textContent = critical;
+  document.getElementById('stat-single-source').textContent = singleSrc;
+  document.getElementById('stat-export-ctrl').textContent = exportCtrl;
+}
+
+// ── Render sidebar component list ────────────────────────────
+function renderComponentList() {
+  const query = document.getElementById('search-input').value.toLowerCase();
+  const list  = document.getElementById('component-list');
+
+  const filtered = allComponents.filter(c => {
+    const matchTier = currentTierFilter === 'all' || String(c.tier) === currentTierFilter;
+    const matchSearch = !query ||
+      c.name.toLowerCase().includes(query) ||
+      c.category.toLowerCase().includes(query) ||
+      c.country.toLowerCase().includes(query);
+    return matchTier && matchSearch;
+  });
+
+  // Sort by risk descending
+  filtered.sort((a, b) => b.risk_score - a.risk_score);
+
+  if (filtered.length === 0) {
+    list.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-muted);font-size:12px">No components match</div>`;
+    return;
+  }
+
+  list.innerHTML = filtered.map(c => `
+    <div class="component-item ${c.id === currentComponentId ? 'active' : ''}"
+         id="item-${c.id}"
+         onclick="selectComponent('${c.id}')">
+      <div class="comp-risk-dot" style="background:${RISK_COLOR[c.risk_label] || 'var(--text-muted)'}"></div>
+      <div class="comp-info">
+        <div class="comp-name">${c.name}</div>
+        <div class="comp-meta">${FLAG[c.country] || '🌐'} ${c.country} · T${c.tier} · ${c.category}</div>
+      </div>
+      <div class="comp-score" style="color:${RISK_COLOR[c.risk_label] || 'var(--text-muted)'}">
+        ${(c.risk_score * 100).toFixed(0)}
+      </div>
+    </div>
+  `).join('');
+}
+
+// ── Filter by tier ────────────────────────────────────────────
+function filterByTier(tier) {
+  currentTierFilter = tier;
+  document.querySelectorAll('.filter-pill').forEach(p => {
+    p.classList.toggle('all', p.dataset.tier === tier);
+  });
+  renderComponentList();
+}
+
+// ── Search ───────────────────────────────────────────────────
+function setupSearch() {
+  document.getElementById('search-input').addEventListener('input', renderComponentList);
+}
+
+// ── Select component ─────────────────────────────────────────
+async function selectComponent(id) {
+  currentComponentId = id;
+
+  // Update sidebar active state
+  document.querySelectorAll('.component-item').forEach(el => {
+    el.classList.toggle('active', el.id === `item-${id}`);
+  });
+
+  // Show risk content, hide empty state
+  document.getElementById('empty-state').style.display = 'none';
+  const content = document.getElementById('risk-content');
+  content.style.display = 'flex';
+
+  // Show loading state
+  document.getElementById('rc-name').textContent = 'Loading…';
+  document.getElementById('rc-badges').innerHTML = '';
+  document.getElementById('gauge-text').textContent = '…';
+  document.getElementById('llm-text').innerHTML = `<div class="loading"><div class="spinner"></div> Generating AI analysis on AMD MI300X…</div>`;
+  document.getElementById('dep-card').style.display = 'none';
+  document.getElementById('feature-grid').innerHTML = '';
+
+  if (demoMode) {
+    renderDemoRisk(id);
+    return;
+  }
+
+  try {
+    const res = await fetch(`${API}/api/risk/${id}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    renderRisk(data);
+  } catch (e) {
+    document.getElementById('llm-text').innerHTML =
+      `<span style="color:var(--risk-critical)">⚠️ Analysis failed: ${e.message}</span>`;
+  }
+}
+
+// ── Render risk data ─────────────────────────────────────────
+function renderRisk(d) {
+  const score = d.risk_score;
+  const label = d.risk_label;
+  const color = RISK_COLOR[label] || 'var(--text-secondary)';
+
+  // Name + badges
+  document.getElementById('rc-name').textContent = d.component_name;
+  document.getElementById('rc-badges').innerHTML = `
+    <span class="badge badge-tier">Tier ${d.tier}</span>
+    <span class="badge badge-country">${FLAG[d.country] || '🌐'} ${d.country}</span>
+    <span class="badge badge-lead">⏱ ${d.lead_time_days}d lead</span>
+    ${d.single_source ? '<span class="badge badge-ss">⚠ Single-Source</span>' : ''}
+    ${d.export_controlled ? '<span class="badge badge-ec">🛡 Export-Controlled</span>' : ''}
+    <span class="badge rb-${label} rc-${label}">${label}</span>
+  `;
+
+  // Gauge
+  const arc = document.getElementById('gauge-arc');
+  const dashTotal = 157;
+  arc.setAttribute('stroke-dashoffset', String(dashTotal * (1 - score)));
+  arc.setAttribute('stroke', color);
+  document.getElementById('gauge-text').textContent = (score * 100).toFixed(0);
+  document.getElementById('gauge-text').setAttribute('fill', color);
+  document.getElementById('gauge-label-text').textContent = label;
+  document.getElementById('gauge-label-text').style.color = color;
+
+  // Feature bars
+  const featureVals = d.feature_values || {};
+  const importantFeatures = Object.entries(featureVals)
+    .filter(([k]) => FEATURE_LABELS[k])
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8);
+
+  document.getElementById('feature-grid').innerHTML = importantFeatures.map(([key, val]) => `
+    <div class="feature-row">
+      <div class="feature-label">
+        <span>${FEATURE_LABELS[key] || key}</span>
+        <span>${(val * 100).toFixed(0)}%</span>
+      </div>
+      <div class="feature-bar-track">
+        <div class="feature-bar-fill" style="width:${Math.min(val * 100, 100).toFixed(1)}%"></div>
+      </div>
+    </div>
+  `).join('');
+
+  // LLM explanation
+  document.getElementById('llm-model-label').textContent = `${d.model_id || 'Local LLM'} · AMD ROCm`;
+  document.getElementById('llm-text').innerHTML = d.llm_explanation
+    ? d.llm_explanation.replace(/\n/g, '<br>')
+    : '<span style="color:var(--text-muted)">No explanation available.</span>';
+
+  // Dependencies
+  const deps = d.dependency_risks || [];
+  if (deps.length > 0) {
+    document.getElementById('dep-card').style.display = 'block';
+    document.getElementById('dep-list').innerHTML = deps.map(dep => `
+      <div class="dep-item" onclick="selectComponent('${dep.id}')">
+        <div class="dep-flag">${FLAG[dep.country] || '🌐'}</div>
+        <div class="dep-info">
+          <div class="dep-name">${dep.name}</div>
+          <div class="dep-country">${dep.country}${dep.single_source ? ' · Single-source' : ''}</div>
+        </div>
+        <div class="dep-score rc-${RISK_LABEL(dep.risk_score)}">${(dep.risk_score * 100).toFixed(0)}</div>
+      </div>
+    `).join('');
+  }
+}
+
+function RISK_LABEL(score) {
+  if (score >= 0.70) return 'CRITICAL';
+  if (score >= 0.50) return 'HIGH';
+  if (score >= 0.30) return 'MEDIUM';
+  return 'LOW';
+}
+
+// ── Demo mode risk render ────────────────────────────────────
+function renderDemoRisk(id) {
+  const comp = allComponents.find(c => c.id === id);
+  if (!comp) return;
+  const fakeData = {
+    component_name: comp.name,
+    tier: comp.tier,
+    country: comp.country,
+    lead_time_days: comp.lead_time_days,
+    single_source: comp.single_source,
+    export_controlled: comp.export_controlled,
+    risk_score: comp.risk_score,
+    risk_label: comp.risk_label,
+    classifier_prob: comp.risk_score,
+    feature_values: {
+      market_geo_risk: comp.risk_score * 0.9,
+      late_delivery_risk: comp.single_source ? 0.9 : 0.2,
+      high_discount_flag: comp.export_controlled ? 0.85 : 0.1,
+      order_status_risk: comp.risk_score * 0.7,
+      shipping_mode_risk: comp.lead_time_days > 90 ? 0.6 : 0.2,
+      product_price_log: 0.5,
+    },
+    llm_explanation: `[DEMO MODE] ${comp.name} sourced from ${comp.country} carries a ${comp.risk_label} risk profile (score: ${(comp.risk_score*100).toFixed(0)}/100). ${comp.single_source ? 'Single-source dependency creates critical vulnerability to supply disruption. ' : ''}${comp.export_controlled ? 'Export control regulations add regulatory risk and potential license delays. ' : ''}Recommend diversifying suppliers and building strategic inventory buffers.`,
+    dependency_risks: [],
+  };
+  renderRisk(fakeData);
+}
+
+// ── Load classifier metrics ──────────────────────────────────
+async function loadMetrics() {
+  try {
+    const res = await fetch(`${API}/api/model-metrics`);
+    if (!res.ok) throw new Error();
+    const m = await res.json();
+
+    document.getElementById('metrics-card').style.display = 'block';
+    document.getElementById('m-accuracy').textContent = (m.accuracy * 100).toFixed(1) + '%';
+    document.getElementById('m-f1').textContent       = (m.f1_score * 100).toFixed(1) + '%';
+    document.getElementById('m-auc').textContent      = m.roc_auc.toFixed(3);
+    document.getElementById('m-samples').textContent  = (m.n_samples_total / 1000).toFixed(0) + 'K';
+    document.getElementById('m-source').textContent   =
+      `Data source: ${m.data_source} · ${m.n_features} features · CV AUC: ${m.cv_roc_auc_mean} ± ${m.cv_roc_auc_std}`;
+
+    document.getElementById('data-source-pill').textContent =
+      m.data_source === 'real_dataco' ? '✅ Real DataCo dataset' : '⚠ Synthetic fallback';
+
+    // Update model pill
+    const health = await fetch(`${API}/api/health`).then(r=>r.json()).catch(()=>({}));
+    document.getElementById('model-pill').textContent =
+      health.llm_model ? `🧠 ${health.llm_model.split('/').pop()}` : '🧠 LLM offline';
+    document.getElementById('llm-model-label').textContent =
+      `${health.llm_model || 'Local LLM'} · AMD ROCm`;
+
+  } catch (e) {
+    document.getElementById('model-pill').textContent = '🧠 Demo mode';
+    document.getElementById('data-source-pill').textContent = '📦 Bundled data';
+  }
+}
+
+// ── Q&A chat ─────────────────────────────────────────────────
+function fillQuery(text) {
+  document.getElementById('query-input').value = text;
+}
+
+async function submitQuery() {
+  const input = document.getElementById('query-input');
+  const query = input.value.trim();
+  if (!query) return;
+
+  const chatArea = document.getElementById('chat-area');
+  const btn = document.getElementById('query-btn');
+
+  // Add user bubble
+  chatArea.innerHTML += `<div class="chat-bubble user">${escHtml(query)}</div>`;
+  input.value = '';
+  btn.disabled = true;
+
+  // Add loading bubble
+  const loadId = 'load-' + Date.now();
+  chatArea.innerHTML += `<div class="chat-bubble assistant loading" id="${loadId}"><div class="spinner"></div>Analyzing on AMD MI300X…</div>`;
+  chatArea.scrollTop = chatArea.scrollHeight;
+
+  if (demoMode) {
+    await new Promise(r => setTimeout(r, 800));
+    document.getElementById(loadId)?.remove();
+    chatArea.innerHTML += `<div class="chat-bubble assistant">
+      [DEMO MODE] ${getDemoAnswer(query)}
+    </div>`;
+    chatArea.scrollTop = chatArea.scrollHeight;
+    btn.disabled = false;
+    return;
+  }
+
+  try {
+    const res = await fetch(`${API}/api/query`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({query, component_id: currentComponentId}),
+    });
+    const data = await res.json();
+    document.getElementById(loadId)?.remove();
+    chatArea.innerHTML += `<div class="chat-bubble assistant">${escHtml(data.answer || 'No response.').replace(/\n/g,'<br>')}</div>`;
+  } catch (e) {
+    document.getElementById(loadId)?.remove();
+    chatArea.innerHTML += `<div class="chat-bubble assistant" style="color:var(--risk-critical)">⚠️ Query failed: ${escHtml(e.message)}</div>`;
+  }
+
+  chatArea.scrollTop = chatArea.scrollHeight;
+  btn.disabled = false;
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function getDemoAnswer(q) {
+  const ql = q.toLowerCase();
+  if (ql.includes('taiwan')) return 'Taiwan accounts for ~90% of advanced semiconductor fabrication capacity globally through TSMC. Geopolitical tensions in the Taiwan Strait represent the single largest systemic risk to global chip supply. Recommend dual-sourcing strategies and strategic inventory buffers of 6-12 months for Taiwan-origin components.';
+  if (ql.includes('euv')) return 'EUV lithography systems are exclusively manufactured by ASML in the Netherlands. With only ~20 machines shipped per year at $150M+ each, this is the most concentrated chokepoint in the entire semiconductor supply chain. A single quarter of disruption could set back global chip production by 2+ years.';
+  if (ql.includes('hbm') || ql.includes('memory')) return 'HBM (High Bandwidth Memory) production is concentrated in South Korea (SK Hynix, Samsung) and is subject to US export controls under BIS regulations. Lead times are 12-18 months and demand significantly exceeds supply due to AI accelerator buildout. Recommend locking in long-term supply agreements immediately.';
+  if (ql.includes('single') || ql.includes('source')) return 'Single-source risk occurs when a critical component has only one qualified supplier globally. This creates catastrophic vulnerability to supplier disruptions (fire, earthquake, financial distress, geopolitical action). Mitigation requires: (1) dual-source qualification campaigns, (2) strategic safety stock of 6-12 months, (3) design-in of alternative components where possible.';
+  return 'This is a complex supply chain question. In live mode (with backend running), I would use the local AMD MI300X LLM to provide a detailed, context-aware analysis drawing on current geopolitical intelligence and supply chain data.';
+}
+
+// ── Enter key in textarea ────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('query-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      submitQuery();
+    }
+  });
+});
+
+// ── Boot ──────────────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>

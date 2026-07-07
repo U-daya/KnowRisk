@@ -1,0 +1,28 @@
+{
+  "data_source": "real_dataco",
+  "n_samples_total": 180519,
+  "n_train": 144415,
+  "n_test": 36104,
+  "accuracy": 0.6961,
+  "f1_score": 0.6636,
+  "roc_auc": 0.7292,
+  "cv_roc_auc_mean": 0.6947,
+  "cv_roc_auc_std": 0.0341,
+  "n_features": 10,
+  "feature_importances": {
+    "scheduled_ship_days": 0.5305,
+    "discount_rate": 0.0041,
+    "high_discount_flag": 0.0,
+    "order_value": 0.005,
+    "benefit_per_order": 0.0201,
+    "shipping_mode_enc": 0.4341,
+    "market_geo_risk": 0.0016,
+    "category_risk": 0.0004,
+    "product_price_log": 0.0036,
+    "order_quantity": 0.0006
+  },
+  "class_balance": {
+    "1": 98977,
+    "0": 81542
+  }
+}

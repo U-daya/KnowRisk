@@ -1,0 +1,723 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-07-07T00:00:00Z",
+  "component_count": 50,
+  "components": [
+    {
+      "id": "COMP-001",
+      "name": "Advanced Logic Die",
+      "category": "Semiconductor",
+      "tier": 1,
+      "country": "Taiwan",
+      "single_source": true,
+      "export_controlled": true,
+      "lead_time_days": 178,
+      "risk_score": 0.7151,
+      "dependencies": [
+        "COMP-044",
+        "COMP-008",
+        "COMP-009"
+      ]
+    },
+    {
+      "id": "COMP-002",
+      "name": "HBM3 Memory Stack",
+      "category": "Memory",
+      "tier": 1,
+      "country": "South Korea",
+      "single_source": true,
+      "export_controlled": false,
+      "lead_time_days": 113,
+      "risk_score": 0.4439,
+      "dependencies": [
+        "COMP-023",
+        "COMP-014",
+        "COMP-008"
+      ]
+    },
+    {
+      "id": "COMP-003",
+      "name": "EUV Photomask",
+      "category": "Photonics",
+      "tier": 1,
+      "country": "Netherlands",
+      "single_source": true,
+      "export_controlled": false,
+      "lead_time_days": 192,
+      "risk_score": 0.3226,
+      "dependencies": [
+        "COMP-011",
+        "COMP-009"
+      ]
+    },
+    {
+      "id": "COMP-004",
+      "name": "Advanced Packaging Substrate",
+      "category": "Substrate",
+      "tier": 1,
+      "country": "Taiwan",
+      "single_source": true,
+      "export_controlled": true,
+      "lead_time_days": 142,
+      "risk_score": 0.5807,
+      "dependencies": [
+        "COMP-011",
+        "COMP-036",
+        "COMP-022",
+        "COMP-042"
+      ]
+    },
+    {
+      "id": "COMP-005",
+      "name": "Wafer Fab Equipment",
+      "category": "Equipment",
+      "tier": 1,
+      "country": "Netherlands",
+      "single_source": true,
+      "export_controlled": false,
+      "lead_time_days": 355,
+      "risk_score": 0.4553,
+      "dependencies": [
+        "COMP-015",
+        "COMP-024"
+      ]
+    },
+    {
+      "id": "COMP-006",
+      "name": "GDDR7 Memory",
+      "category": "Memory",
+      "tier": 1,
+      "country": "South Korea",
+      "single_source": false,
+      "export_controlled": false,
+      "lead_time_days": 102,
+      "risk_score": 0.209,
+      "dependencies": [
+        "COMP-016",
+        "COMP-015",
+        "COMP-022",
+        "COMP-023"
+      ]
+    },
+    {
+      "id": "COMP-007",
+      "name": "SiC Power Module",
+      "category": "Power",
+      "tier": 1,
+      "country": "USA",
+      "single_source": false,
+      "export_controlled": false,
+      "lead_time_days": 68,
+      "risk_score": 0.1059,
+      "dependencies": [
+        "COMP-019",
+        "COMP-042",
+        "COMP-022",
+        "COMP-036"
+      ]
+    },
+    {
+      "id": "COMP-008",
+      "name": "RF Front-End Module",
+      "category": "RF",
+      "tier": 2,
+      "country": "Taiwan",
+      "single_source": true,
+      "export_controlled": false,
+      "lead_time_days": 89,
+      "risk_score": 0.5082,
+      "dependencies": [
+        "COMP-047",
+        "COMP-033"
+      ]
+    },
+    {
+      "id": "COMP-009",
+      "name": "PCIe 5.0 Switch IC",
+      "category": "Connectivity",
+      "tier": 2,
+      "country": "USA",
+      "single_source": false,
+      "export_controlled": false,
+      "lead_time_days": 45,
+      "risk_score": 0.0953,
+      "dependencies": [
+        "COMP-045",
+        "COMP-032",
+        "COMP-026",
+        "COMP-046"
+      ]
+    },
+    {
+      "id": "COMP-010",
+      "name": "High-K Dielectric Film",
+      "category": "Materials",
+      "tier": 1,
+      "country": "Germany",
+      "single_source": true,
+      "export_controlled": false,
+      "lead_time_days": 104,
+      "risk_score": 0.3898,
+      "dependencies": [
+        "COMP-023",
+        "COMP-019"
+      ]
+    },
+    {
+      "id": "COMP-011",
+      "name": "Copper Interconnect Wire",
+      "category": "Materials",
+      "tier": 2,
+      "country": "Japan",
+      "single_source": false,
+      "export_controlled": false,
+      "lead_time_days": 23,
+      "risk_score": 0.1204,
+      "dependencies": [
+        "COMP-040",
+        "COMP-045",
+        "COMP-032",
+        "COMP-033"
+      ]
+    },
+    {
+      "id": "COMP-012",
+      "name": "Silicon Wafer (300mm)",
+      "category": "Materials",
+      "tier": 1,
+      "country": "Japan",
+      "single_source": true,
+      "export_controlled": false,
+      "lead_time_days": 58,
+      "risk_score": 0.3518,
+      "dependencies": [
+        "COMP-042",
+        "COMP-044",
+        "COMP-022"
+      ]
+    },
+    {
+      "id": "COMP-013",
+      "name": "Photoresist (EUV-grade)",
+      "category": "Chemicals",
+      "tier": 1,
+      "country": "Japan",
+      "single_source": false,
+      "export_controlled": false,
+      "lead_time_days": 127,
+      "risk_score": 0.1909,
+      "dependencies": [
+        "COMP-014",
+        "COMP-044",
+        "COMP-042",
+        "COMP-009"
+      ]
+    },
+    {
+      "id": "COMP-014",
+      "name": "Process Control System",
+      "category": "Equipment",
+      "tier": 2,
+      "country": "USA",
+      "single_source": true,
+      "export_controlled": false,
+      "lead_time_days": 172,
+      "risk_score": 0.2879,
+      "dependencies": [
+        "COMP-028"
+      ]
+    },
+    {
+      "id": "COMP-015",
+      "name": "OSAT Assembly Service",
+      "category": "Assembly",
+      "tier": 2,
+      "country": "Malaysia",
+      "single_source": false,
+      "export_controlled": false,
+      "lead_time_days": 54,
+      "risk_score": 0.1044,
+      "dependencies": [
+        "COMP-043"
+      ]
+    },
+    {
+      "id": "COMP-016",
+      "name": "Advanced Thermal Interface",
+      "category": "Thermal",
+      "tier": 2,
+      "country": "Germany",
+      "single_source": false,
+      "export_controlled": false,
+      "lead_time_days": 26,
+      "risk_score": 0.0762,
+      "dependencies": [
+        "COMP-028",
+        "COMP-033",
+        "COMP-048"
+      ]
+    },
+    {
+      "id": "COMP-017",
+      "name": "CoWoS Interposer",
+      "category": "Packaging",
+      "tier": 1,
+      "country": "Taiwan",
+      "single_source": true,
+      "export_controlled": true,
+      "lead_time_days": 117,
+      "risk_score": 0.642,
+      "dependencies": [
+        "COMP-008",
+        "COMP-023",
+        "COMP-022"
+      ]
+    },
+    {
+      "id": "COMP-018",
+      "name": "Sapphire Substrate",
+      "category": "Materials",
+      "tier": 1,
+      "country": "Japan",
+      "single_source": false,
+      "export_controlled": false,
+      "lead_time_days": 107,
+      "risk_score": 0.1956,
+      "dependencies": [
+        "COMP-020",
+        "COMP-008"
+      ]
+    },
+    {
+      "id": "COMP-019",
+      "name": "Rare Earth Magnets",
+      "category": "Materials",
+      "tier": 2,
+      "country": "China",
+      "single_source": true,
+      "export_controlled": true,
+      "lead_time_days": 43,
+      "risk_score": 0.5191,
+      "dependencies": [
+        "COMP-046",
+        "COMP-029"
+      ]
+    },
+    {
+      "id": "COMP-020",
+      "name": "Cobalt Slurry (CMP)",
+      "category": "Chemicals",
+      "tier": 2,
+      "country": "USA",
+      "single_source": false,
+      "export_controlled": false,
+      "lead_time_days": 25,
+      "risk_score": 0.0731,
+      "dependencies": [
+        "COMP-031",
+        "COMP-034",
+        "COMP-033",
+        "COMP-028"
+      ]
+    },
+    {
+      "id": "COMP-021",
+      "name": "Lithography System",
+      "category": "Equipment",
+      "tier": 1,
+      "country": "Netherlands",
+      "single_source": true,
+      "export_controlled": true,
+      "lead_time_days": 398,
+      "risk_score": 0.5816,
+      "dependencies": [
+        "COMP-009"
+      ]
+    },
+    {
+      "id": "COMP-022",
+      "name": "Etch System",
+      "category": "Equipment",
+      "tier": 2,
+      "country": "USA",
+      "single_source": false,
+      "export_controlled": false,
+      "lead_time_days": 172,
+      "risk_score": 0.1388,
+      "dependencies": [
+        "COMP-046"
+      ]
+    },
+    {
+      "id": "COMP-023",
+      "name": "CVD System",
+      "category": "Equipment",
+      "tier": 2,
+      "country": "Japan",
+      "single_source": false,
+      "export_controlled": false,
+      "lead_time_days": 163,
+      "risk_score": 0.1306,
+      "dependencies": [
+        "COMP-026"
+      ]
+    },
+    {
+      "id": "COMP-024",
+      "name": "Inspection System (e-beam)",
+      "category": "Equipment",
+      "tier": 2,
+      "country": "Israel",
+      "single_source": true,
+      "export_controlled": false,
+      "lead_time_days": 198,
+      "risk_score": 0.4047,
+      "dependencies": [
+        "COMP-027"
+      ]
+    },
+    {
+      "id": "COMP-025",
+      "name": "PCB (Multi-layer)",
+      "category": "PCB",
+      "tier": 3,
+      "country": "China",
+      "single_source": false,
+      "export_controlled": false,
+      "lead_time_days": 28,
+      "risk_score": 0.1861,
+      "dependencies": []
+    },
+    {
+      "id": "COMP-026",
+      "name": "Passive Components (MLCC)",
+      "category": "Passives",
+      "tier": 3,
+      "country": "Japan",
+      "single_source": false,
+      "export_controlled": false,
+      "lead_time_days": 28,
+      "risk_score": 0.0677,
+      "dependencies": []
+    },
+    {
+      "id": "COMP-027",
+      "name": "Voltage Regulator Module",
+      "category": "Power",
+      "tier": 3,
+      "country": "USA",
+      "single_source": false,
+      "export_controlled": false,
+      "lead_time_days": 21,
+      "risk_score": 0.0089,
+      "dependencies": []
+    },
+    {
+      "id": "COMP-028",
+      "name": "Ethernet PHY IC",
+      "category": "Connectivity",
+      "tier": 3,
+      "country": "USA",
+      "single_source": false,
+      "export_controlled": false,
+      "lead_time_days": 20,
+      "risk_score": 0.0217,
+      "dependencies": []
+    },
+    {
+      "id": "COMP-029",
+      "name": "Clock Generator IC",
+      "category": "Timing",
+      "tier": 3,
+      "country": "USA",
+      "single_source": false,
+      "export_controlled": false,
+      "lead_time_days": 46,
+      "risk_score": 0.0716,
+      "dependencies": []
+    },
+    {
+      "id": "COMP-030",
+      "name": "DDR5 DRAM Module",
+      "category": "Memory",
+      "tier": 2,
+      "country": "South Korea",
+      "single_source": false,
+      "export_controlled": false,
+      "lead_time_days": 50,
+      "risk_score": 0.1457,
+      "dependencies": [
+        "COMP-031",
+        "COMP-045"
+      ]
+    },
+    {
+      "id": "COMP-031",
+      "name": "NVMe SSD Controller",
+      "category": "Storage",
+      "tier": 3,
+      "country": "Taiwan",
+      "single_source": false,
+      "export_controlled": false,
+      "lead_time_days": 39,
+      "risk_score": 0.2398,
+      "dependencies": []
+    },
+    {
+      "id": "COMP-032",
+      "name": "Board Management Controller",
+      "category": "MCU",
+      "tier": 3,
+      "country": "USA",
+      "single_source": true,
+      "export_controlled": true,
+      "lead_time_days": 43,
+      "risk_score": 0.5298,
+      "dependencies": []
+    },
+    {
+      "id": "COMP-033",
+      "name": "Fiber Optic Transceiver",
+      "category": "Optical",
+      "tier": 3,
+      "country": "China",
+      "single_source": false,
+      "export_controlled": true,
+      "lead_time_days": 53,
+      "risk_score": 0.386,
+      "dependencies": []
+    },
+    {
+      "id": "COMP-034",
+      "name": "High-Voltage Capacitor",
+      "category": "Passives",
+      "tier": 3,
+      "country": "Japan",
+      "single_source": false,
+      "export_controlled": false,
+      "lead_time_days": 22,
+      "risk_score": 0.1133,
+      "dependencies": []
+    },
+    {
+      "id": "COMP-035",
+      "name": "Custom ASIC (AI Engine)",
+      "category": "Semiconductor",
+      "tier": 1,
+      "country": "Taiwan",
+      "single_source": true,
+      "export_controlled": false,
+      "lead_time_days": 216,
+      "risk_score": 0.4666,
+      "dependencies": [
+        "COMP-011",
+        "COMP-042"
+      ]
+    },
+    {
+      "id": "COMP-036",
+      "name": "3D NAND Flash",
+      "category": "Memory",
+      "tier": 2,
+      "country": "South Korea",
+      "single_source": false,
+      "export_controlled": false,
+      "lead_time_days": 77,
+      "risk_score": 0.2127,
+      "dependencies": [
+        "COMP-047",
+        "COMP-032",
+        "COMP-045",
+        "COMP-048"
+      ]
+    },
+    {
+      "id": "COMP-037",
+      "name": "Tantalum Capacitor",
+      "category": "Passives",
+      "tier": 3,
+      "country": "China",
+      "single_source": true,
+      "export_controlled": false,
+      "lead_time_days": 43,
+      "risk_score": 0.5166,
+      "dependencies": []
+    },
+    {
+      "id": "COMP-038",
+      "name": "Power Management IC",
+      "category": "Power",
+      "tier": 3,
+      "country": "USA",
+      "single_source": false,
+      "export_controlled": false,
+      "lead_time_days": 32,
+      "risk_score": 0.0344,
+      "dependencies": []
+    },
+    {
+      "id": "COMP-039",
+      "name": "Optical Sensor Array",
+      "category": "Optical",
+      "tier": 2,
+      "country": "Japan",
+      "single_source": true,
+      "export_controlled": false,
+      "lead_time_days": 66,
+      "risk_score": 0.2845,
+      "dependencies": [
+        "COMP-031"
+      ]
+    },
+    {
+      "id": "COMP-040",
+      "name": "Thermal Paste (high-perf)",
+      "category": "Thermal",
+      "tier": 3,
+      "country": "Germany",
+      "single_source": false,
+      "export_controlled": false,
+      "lead_time_days": 34,
+      "risk_score": 0.075,
+      "dependencies": []
+    },
+    {
+      "id": "COMP-041",
+      "name": "Indium Phosphide Wafer",
+      "category": "Materials",
+      "tier": 1,
+      "country": "USA",
+      "single_source": true,
+      "export_controlled": false,
+      "lead_time_days": 101,
+      "risk_score": 0.3959,
+      "dependencies": [
+        "COMP-024"
+      ]
+    },
+    {
+      "id": "COMP-042",
+      "name": "Gallium Nitride Die",
+      "category": "Semiconductor",
+      "tier": 2,
+      "country": "USA",
+      "single_source": false,
+      "export_controlled": false,
+      "lead_time_days": 89,
+      "risk_score": 0.1069,
+      "dependencies": [
+        "COMP-025",
+        "COMP-043",
+        "COMP-029",
+        "COMP-047"
+      ]
+    },
+    {
+      "id": "COMP-043",
+      "name": "Electroplating Chemistry",
+      "category": "Chemicals",
+      "tier": 3,
+      "country": "Germany",
+      "single_source": false,
+      "export_controlled": false,
+      "lead_time_days": 24,
+      "risk_score": 0.0474,
+      "dependencies": []
+    },
+    {
+      "id": "COMP-044",
+      "name": "Specialty Gas (WF6)",
+      "category": "Chemicals",
+      "tier": 2,
+      "country": "USA",
+      "single_source": true,
+      "export_controlled": true,
+      "lead_time_days": 58,
+      "risk_score": 0.4655,
+      "dependencies": [
+        "COMP-037",
+        "COMP-045",
+        "COMP-040",
+        "COMP-046"
+      ]
+    },
+    {
+      "id": "COMP-045",
+      "name": "Argon/Nitrogen Supply",
+      "category": "Chemicals",
+      "tier": 3,
+      "country": "USA",
+      "single_source": false,
+      "export_controlled": false,
+      "lead_time_days": 13,
+      "risk_score": 0.093,
+      "dependencies": []
+    },
+    {
+      "id": "COMP-046",
+      "name": "Back-End Test Equipment",
+      "category": "Equipment",
+      "tier": 3,
+      "country": "Japan",
+      "single_source": false,
+      "export_controlled": false,
+      "lead_time_days": 83,
+      "risk_score": 0.0913,
+      "dependencies": []
+    },
+    {
+      "id": "COMP-047",
+      "name": "Carrier Tape/Reel",
+      "category": "Packaging",
+      "tier": 3,
+      "country": "China",
+      "single_source": false,
+      "export_controlled": true,
+      "lead_time_days": 24,
+      "risk_score": 0.4279,
+      "dependencies": []
+    },
+    {
+      "id": "COMP-048",
+      "name": "Shipping Container Slot",
+      "category": "Logistics",
+      "tier": 3,
+      "country": "Malaysia",
+      "single_source": false,
+      "export_controlled": false,
+      "lead_time_days": 8,
+      "risk_score": 0.0742,
+      "dependencies": []
+    },
+    {
+      "id": "COMP-049",
+      "name": "Export License (ECCN 3E)",
+      "category": "Regulatory",
+      "tier": 1,
+      "country": "USA",
+      "single_source": true,
+      "export_controlled": false,
+      "lead_time_days": 104,
+      "risk_score": 0.3111,
+      "dependencies": [
+        "COMP-020"
+      ]
+    },
+    {
+      "id": "COMP-050",
+      "name": "IP Core License (EDA)",
+      "category": "Software",
+      "tier": 1,
+      "country": "USA",
+      "single_source": false,
+      "export_controlled": false,
+      "lead_time_days": 39,
+      "risk_score": 0.1571,
+      "dependencies": [
+        "COMP-044",
+        "COMP-014",
+        "COMP-022"
+      ]
+    }
+  ]
+}

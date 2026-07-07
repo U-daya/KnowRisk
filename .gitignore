@@ -1,0 +1,47 @@
+__pycache__/
+*.pyc
+*.log
+*.pid
+venv/
+.venv/
+*.joblib
+node_modules/
+.env
+
+# Don't commit the raw Kaggle dataset — it's not yours to redistribute,
+# and it's 27MB+ which bloats the repo unnecessarily
+classifier/DataCoSupplyChainDataset.csv
+
+# Model download caches, if any land in the repo dir
+*.safetensors
+*.bin
+
+classifier/risk_model.joblib
+
+
+# Hugging Face model cache, if it ends up local to the repo
+.cache/
+*.pt
+*.pth
+
+# Python virtual envs, various naming conventions
+env/
+ENV/
+
+# OS/editor cruft
+.DS_Store
+.vscode/settings.json
+
+# Trained model binary - regenerate via train_risk_model.py (metrics.json IS tracked, for the record)
+classifier/risk_model.joblib
+
+# Hugging Face model cache, if it ends up local to the repo
+.cache/
+*.pt
+*.pth
+
+env/
+ENV/
+.DS_Store
+.vscode/settings.json
+classifier/risk_model.joblib

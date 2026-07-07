@@ -1,0 +1,12 @@
+[
+  "scheduled_ship_days",
+  "discount_rate",
+  "high_discount_flag",
+  "order_value",
+  "benefit_per_order",
+  "shipping_mode_enc",
+  "market_geo_risk",
+  "category_risk",
+  "product_price_log",
+  "order_quantity"
+]
