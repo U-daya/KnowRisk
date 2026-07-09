@@ -458,15 +458,51 @@ def _ddg_search(search_query: str, timeout: float = 1.5) -> list[str]:
         news_empty_results += 1
     return headlines
 
-# ── LLM explanation ───────────────────────────────────────────────────────
+def _parse_structured_explanation(text: str) -> dict[str, str]:
+    """
+    Parse model output that should contain three labeled lines:
+        RISK_FACTOR: <text>
+        SCENARIO: <text>
+        MITIGATION: <text>
+    Returns a dict with keys risk_factor, scenario, mitigation.
+    Any missing field is set to empty string.
+    """
+    fields: dict[str, str] = {"risk_factor": "", "scenario": "", "mitigation": ""}
+    # Try label-prefixed parsing first
+    for line in text.splitlines():
+        line = line.strip()
+        for key, prefixes in [
+            ("risk_factor", ("RISK_FACTOR:", "RISK FACTOR:")),
+            ("scenario",    ("SCENARIO:",)),
+            ("mitigation",  ("MITIGATION:",)),
+        ]:
+            for prefix in prefixes:
+                if line.upper().startswith(prefix):
+                    fields[key] = line[len(prefix):].strip()
+                    break
+    # If no labels found, fall back to sentence splitting
+    if not any(fields.values()):
+        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
+        fields["risk_factor"] = sentences[0] if len(sentences) > 0 else text
+        fields["scenario"]    = sentences[1] if len(sentences) > 1 else ""
+        fields["mitigation"]  = sentences[2] if len(sentences) > 2 else ""
+    return fields
+
 
 def _generate_explanation(component: dict, risk_score: float, risk_label: str) -> dict:
-    """Generate a plain-language risk explanation, using semantic cache and news search."""
+    """
+    Generate a structured risk explanation with three named fields:
+    risk_factor, scenario, mitigation.
+    Uses semantic cache; on miss, runs LLM with a labeled-output prompt and
+    parses the result. Retries once if any field is missing. Falls back to
+    putting the full text in risk_factor on persistent failure.
+    """
     global total_queries, cache_hits, news_search_failures, news_empty_results
+    import json as _json
     total_queries += 1
     t0 = time.time()
     news_grounded = False
-    
+
     geo_risk = COUNTRY_GEO_RISK.get(component.get("country", ""), 0.35)
     prompt = f"""Component Facts:
 - Name: {component['name']}
@@ -479,17 +515,20 @@ def _generate_explanation(component: dict, risk_score: float, risk_label: str) -
 - Dependencies: {len(component.get('dependencies', []))} upstream components
 
 Key qualitative risk drivers:
-- Geographic risk (country): {geo_risk:.2f}
+- Geographic concentration: {geo_risk:.2f}
 - Single-source vulnerability: {'Yes' if component['single_source'] else 'No'}
 - Export control exposure: {'Yes' if component['export_controlled'] else 'No'}
-- Supply lead time pressure: {component['lead_time_days']} days
+- Lead time pressure: {component['lead_time_days']} days
 
-Explain the primary qualitative risk factors, describe a potential supply disruption scenario based on these facts, and recommend a concrete mitigation option."""
+Respond with EXACTLY three labeled lines in this format:
+RISK_FACTOR: <one sentence on the primary qualitative risk driver>
+SCENARIO: <one sentence describing a plausible disruption scenario>
+MITIGATION: <one sentence recommending a concrete mitigation action>"""
 
-    # Namespace by component ID to prevent cross-component cache collisions
+    # Namespace by component ID
     namespace = component["id"]
 
-    # 1. Semantic cache lookup
+    # 1. Semantic cache lookup — responses are JSON-encoded structured dicts
     try:
         cache = _get_cache()
         transformer = _get_sentence_transformer()
@@ -499,12 +538,14 @@ Explain the primary qualitative risk factors, describe a potential supply disrup
         if cached_res is not None:
             cache_hits += 1
             latency_ms = round((time.time() - t0) * 1000.0, 2)
-            return {
-                "text": cached_res,
-                "source": "cache",
-                "latency_ms": latency_ms,
-                "news_grounded": cached_news
-            }
+            # cached_res may be a JSON dict string (new format) or plain text (old)
+            try:
+                fields = _json.loads(cached_res)
+                if not isinstance(fields, dict):
+                    raise ValueError
+            except (ValueError, TypeError):
+                fields = {"risk_factor": cached_res, "scenario": "", "mitigation": ""}
+            return {**fields, "source": "cache", "latency_ms": latency_ms, "news_grounded": cached_news}
     except Exception as e:
         print(f"⚠️ Cache read error: {e}")
 
@@ -519,67 +560,72 @@ Explain the primary qualitative risk factors, describe a potential supply disrup
         news_grounded = False
 
     system_msg = (
-        "You are a semiconductor supply-chain risk analyst. Answer in exactly three sentences. "
-        "Provide a concise, plain prose assessment of the qualitative risk factors for the given component. "
-        "Do not use markdown, bold text, headers, lists, or bullets. Do not reference the ML risk score or risk label."
+        "You are a semiconductor supply-chain risk analyst. "
+        "Respond with EXACTLY three labeled lines as instructed. "
+        "Each line must start with its label (RISK_FACTOR:, SCENARIO:, MITIGATION:) followed by one concise sentence. "
+        "Do not use markdown, bold, lists, or headers. Do not reference numeric risk scores."
     )
     if news_context:
         system_msg += f"\nGround your response in the following real-time news:\n{news_context}"
 
-    # 3. Native inference
-    try:
+    # 3. LLM call — with one retry if any field is missing
+    def _run_inference() -> str:
         tokenizer, model = _get_llm()
-        
         messages = [
             {"role": "system", "content": system_msg},
-            {"role": "user", "content": prompt},
+            {"role": "user",   "content": prompt},
         ]
         text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
-
         _print_rocm_smi("Start of Explanation Generation")
         with torch.no_grad():
             generated_ids = model.generate(
                 **model_inputs,
-                max_new_tokens=120,
-                do_sample=False
+                max_new_tokens=160,
+                do_sample=False,
             )
-
         generated_ids = [
-            output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
+            output_ids[len(input_ids):]
+            for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
         ]
-        response_text = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
+        raw = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
         _print_rocm_smi("End of Explanation Generation")
-        
-        cleaned_text = clean_response_text(response_text)
-        cleaned_text = truncate_to_last_sentence(cleaned_text)
-        
-        # Cache the result
+        return raw
+
+    try:
+        import json as _json
+        raw = _run_inference()
+        fields = _parse_structured_explanation(clean_response_text(raw))
+
+        # Retry once if any required field is empty
+        if not fields["risk_factor"] or not fields["scenario"] or not fields["mitigation"]:
+            print("⚠️ Structured parse incomplete, retrying inference once")
+            raw2 = _run_inference()
+            fields2 = _parse_structured_explanation(clean_response_text(raw2))
+            filled_orig  = sum(1 for v in fields.values()  if v)
+            filled_retry = sum(1 for v in fields2.values() if v)
+            if filled_retry > filled_orig:
+                fields = fields2
+
         try:
-            cache.add(namespace, prompt, q_emb, cleaned_text, news_grounded)
+            cache.add(namespace, prompt, q_emb, _json.dumps(fields), news_grounded)
         except Exception as e:
             print(f"⚠️ Failed to add to cache: {e}")
-            
+
         latency_ms = round((time.time() - t0) * 1000.0, 2)
         _update_latency_stat(latency_ms)
-        
-        return {
-            "text": cleaned_text,
-            "source": "mi300x",
-            "latency_ms": latency_ms,
-            "news_grounded": news_grounded
-        }
+        return {**fields, "source": "mi300x", "latency_ms": latency_ms, "news_grounded": news_grounded}
+
     except Exception as e:
-        fallback_text = f"Qualitative risk analysis for {component['name']} ( Tier {component['tier']}, sourced from {component['country']} ) is currently offline due to inference issues."
-        cleaned_fallback = clean_response_text(fallback_text)
-        cleaned_fallback = truncate_to_last_sentence(cleaned_fallback)
         latency_ms = round((time.time() - t0) * 1000.0, 2)
         _update_latency_stat(latency_ms)
         return {
-            "text": f"[LLM local inference failed: {e}] " + cleaned_fallback,
+            "risk_factor": f"[LLM inference failed: {e}]",
+            "scenario": "",
+            "mitigation": "",
             "source": "synthetic",
             "latency_ms": latency_ms,
-            "news_grounded": False
+            "news_grounded": False,
         }
 
 # ── Public API ────────────────────────────────────────────────────────────

@@ -1,0 +1,36 @@
+import type { ComponentRiskDetail } from '../api'
+
+interface Props {
+  detail: ComponentRiskDetail | null
+  loading: boolean
+}
+
+const BLOCKS = [
+  { key: 'risk_factor' as const, label: 'Risk Factor', borderColor: '#dc2626' }, // red-600
+  { key: 'scenario'    as const, label: 'Scenario',    borderColor: '#d97706' }, // amber-600
+  { key: 'mitigation' as const, label: 'Mitigation',  borderColor: '#52525b' }, // zinc-600
+]
+
+export default function RiskStrip({ detail, loading }: Props) {
+  // Show nothing before any component is selected
+  if (!detail && !loading) return null
+
+  return (
+    <div className="flex gap-6 border-b border-zinc-800 px-4 py-3 max-h-[22vh] overflow-hidden">
+      {BLOCKS.map((block) => (
+        <div
+          key={block.key}
+          className="flex-1 pl-3"
+          style={{ borderLeft: `2px solid ${block.borderColor}` }}
+        >
+          <div className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">
+            {block.label}
+          </div>
+          <p className="text-[12px] leading-snug text-zinc-300">
+            {loading ? '' : (detail?.llm_explanation[block.key] ?? '')}
+          </p>
+        </div>
+      ))}
+    </div>
+  )
+}

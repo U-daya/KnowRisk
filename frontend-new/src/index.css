@@ -5,5 +5,25 @@
 }
 
 @layer base {
-  body { @apply bg-zinc-950 text-zinc-300; }
+  body {
+    @apply bg-zinc-950 text-zinc-300;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+  /* Suppress ReactFlow edge arrowhead markers defaulting to red */
+  .react-flow__arrowhead path,
+  .react-flow__edge-path {
+    stroke: #3f3f46 !important;
+    fill: none !important;
+  }
+  /* Remove ReactFlow Controls default blue/red styling */
+  .react-flow__controls-button {
+    background: #18181b !important;
+    border-color: #27272a !important;
+    fill: #71717a !important;
+  }
+  .react-flow__controls-button:hover {
+    background: #27272a !important;
+  }
 }
