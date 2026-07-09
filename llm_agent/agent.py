@@ -3,10 +3,6 @@
 agent.py — KnowRisk LLM Agent
 Combines the classifier's quantitative risk score with an LLM-generated
 plain-language explanation.
-
-Reads from environment:
-  LLM_BASE_URL  — e.g. http://localhost:8001/v1
-  LLM_MODEL     — e.g. Qwen/Qwen2.5-70B-Instruct
 """
 
 import json
@@ -14,7 +10,10 @@ import os
 import sys
 import time
 import subprocess
+import zipfile
+import re
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 import joblib
 import numpy as np
@@ -22,28 +21,314 @@ import pandas as pd
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+# Set HF_HOME inside python process only
+os.environ["HF_HOME"] = str(Path("/root/.cache/huggingface"))
+
 # ── Paths ──────────────────────────────────────────────────────────────────
-REPO_ROOT    = Path(__file__).parent.parent
-SUPPLIERS    = REPO_ROOT / "data" / "suppliers.json"
-MODEL_PATH   = REPO_ROOT / "classifier" / "risk_model.joblib"
-FEATURES_PATH= REPO_ROOT / "classifier" / "feature_columns.json"
+REPO_ROOT     = Path(__file__).resolve().parent.parent
+SUPPLIERS     = REPO_ROOT / "data" / "suppliers.json"
+MODEL_PATH    = REPO_ROOT / "classifier" / "risk_model.joblib"
+FEATURES_PATH = REPO_ROOT / "classifier" / "feature_columns.json"
 
-# ── Lazy-loaded globals ────────────────────────────────────────────────────
-_model        = None
-_features     = None
-_suppliers    = None
-_tokenizer    = None
-_llm_model    = None
+# Resolve cache path
+cache_path_env = os.environ.get("KNOWRISK_CACHE_PATH")
+if cache_path_env:
+    CACHE_PATH = Path(cache_path_env)
+else:
+    CACHE_PATH = Path(__file__).resolve().parent / "cache.npz"
 
-def _load_classifier():
-    global _model, _features
-    if _model is None:
-        if not MODEL_PATH.exists():
-            raise FileNotFoundError(f"Classifier model not found: {MODEL_PATH}. Run classifier/train_risk_model.py first.")
-        _model = joblib.load(MODEL_PATH)
-        with open(FEATURES_PATH) as f:
-            _features = json.load(f)
-    return _model, _features
+# ── Globals ────────────────────────────────────────────────────────────────
+_model                = None
+_features             = None
+_suppliers            = None
+_tokenizer            = None
+_llm_model            = None
+_sentence_transformer = None
+_cache                = None
+
+# Server stats
+news_search_failures = 0
+news_empty_results = 0
+latency_samples = []
+cache_hits = 0
+total_queries = 0
+
+def _update_latency_stat(latency_ms: float):
+    global latency_samples
+    latency_samples.append(latency_ms)
+    if len(latency_samples) > 1000:
+        latency_samples = latency_samples[-1000:]
+
+# ── Semantic Cache ─────────────────────────────────────────────────────────
+class SemanticCache:
+    def __init__(self, filepath: Path):
+        self.filepath = filepath
+        self.namespaces = []
+        self.prompts = []
+        self.embeddings = []
+        self.responses = []
+        self.timestamps = []
+        self.news_grounded = []
+        self.load()
+
+    def load(self):
+        if not self.filepath.exists():
+            return
+        try:
+            with np.load(self.filepath, allow_pickle=True) as data:
+                self.namespaces = list(data.get("namespaces", []))
+                self.prompts = list(data["prompts"])
+                self.embeddings = list(data["embeddings"])
+                self.responses = list(data["responses"])
+                self.timestamps = list(data["timestamps"])
+                # Handle boolean/None/str conversion safely
+                self.news_grounded = list(data["news_grounded"])
+        except (FileNotFoundError, ValueError, EOFError, KeyError, zipfile.BadZipFile) as e:
+            print(f"⚠️ Cache load failed ({type(e).__name__}): {e}. Falling back to empty cache.")
+            self.namespaces = []
+            self.prompts = []
+            self.embeddings = []
+            self.responses = []
+            self.timestamps = []
+            self.news_grounded = []
+
+    def save(self):
+        tmp_filepath = self.filepath.with_name(self.filepath.name + ".tmp.npz")
+        try:
+            np.savez_compressed(
+                tmp_filepath,
+                namespaces=np.array(self.namespaces, dtype=object),
+                prompts=np.array(self.prompts, dtype=object),
+                embeddings=np.array(self.embeddings, dtype=float),
+                responses=np.array(self.responses, dtype=object),
+                timestamps=np.array(self.timestamps, dtype=float),
+                news_grounded=np.array(self.news_grounded, dtype=object) # Use object dtype to support None values
+            )
+            os.replace(tmp_filepath, self.filepath)
+        except Exception as e:
+            print(f"⚠️ Cache save failed: {e}")
+            if tmp_filepath.exists():
+                try:
+                    tmp_filepath.unlink()
+                except Exception:
+                    pass
+
+    def get(self, namespace: str, prompt_text: str, q_emb: np.ndarray, ttl_hours: float) -> tuple[str | None, object]:
+        if len(self.embeddings) == 0:
+            return None, None
+        
+        # Filter indices by matching namespace exactly
+        matching_indices = [i for i, ns in enumerate(self.namespaces) if ns == namespace]
+        if not matching_indices:
+            return None, None
+
+        norm_q = np.linalg.norm(q_emb)
+        if norm_q > 0:
+            q_emb = q_emb / norm_q
+            
+        # Extract matching embeddings
+        sub_embeddings = np.array([self.embeddings[i] for i in matching_indices], dtype=float)
+        norms = np.linalg.norm(sub_embeddings, axis=1)
+        norms = np.where(norms == 0, 1.0, norms)
+        normalized_embeddings = sub_embeddings / norms[:, np.newaxis]
+        
+        similarities = np.dot(normalized_embeddings, q_emb)
+        best_sub_idx = int(np.argmax(similarities))
+        best_sim = similarities[best_sub_idx]
+        best_idx = matching_indices[best_sub_idx]
+        
+        if best_sim >= 0.95:
+            entry_time = self.timestamps[best_idx]
+            age_hours = (time.time() - entry_time) / 3600.0
+            if age_hours <= ttl_hours:
+                return self.responses[best_idx], self.news_grounded[best_idx]
+            else:
+                print(f"Evicting stale cache entry for prompt similarity {best_sim:.4f} (age: {age_hours:.2f} hours)")
+                self.namespaces.pop(best_idx)
+                self.prompts.pop(best_idx)
+                self.embeddings.pop(best_idx)
+                self.responses.pop(best_idx)
+                self.timestamps.pop(best_idx)
+                self.news_grounded.pop(best_idx)
+                self.save()
+        return None, None
+
+    def add(self, namespace: str, prompt_text: str, q_emb: np.ndarray, response_text: str, news_grounded: object):
+        norm_q = np.linalg.norm(q_emb)
+        if norm_q > 0:
+            q_emb = q_emb / norm_q
+        self.namespaces.append(namespace)
+        self.prompts.append(prompt_text)
+        self.embeddings.append(q_emb)
+        self.responses.append(response_text)
+        self.timestamps.append(time.time())
+        self.news_grounded.append(news_grounded)
+        self.save()
+
+# ── Startup & Helpers ──────────────────────────────────────────────────────
+
+def get_gpu_info() -> tuple[bool, str]:
+    available = False
+    name = "N/A"
+    try:
+        available = torch.cuda.is_available()
+        if available:
+            name = torch.cuda.get_device_name(0)
+    except Exception:
+        pass
+    return available, name
+
+def init_models():
+    """Eagerly load models at startup. Fail startup loudly if either fails."""
+    global _tokenizer, _llm_model, _sentence_transformer, _cache
+    
+    # 1. Load SentenceTransformer (MiniLM)
+    print("🚀 [Startup] Initializing MiniLM for semantic caching...")
+    t0 = time.time()
+    try:
+        from sentence_transformers import SentenceTransformer
+        _sentence_transformer = SentenceTransformer("all-MiniLM-L6-v2")
+        print(f"✅ MiniLM loaded in {time.time() - t0:.2f} seconds.")
+    except Exception as e:
+        print(f"❌ Failed to load MiniLM: {e}")
+        raise RuntimeError(f"Failed to load MiniLM: {e}") from e
+        
+    # 2. Load Local LLM (Qwen)
+    model_id = get_llm_model()
+    print(f"🚀 [Startup] Initializing local Hugging Face model: {model_id}...")
+    t0 = time.time()
+    try:
+        _print_rocm_smi("Pre-Model Load")
+        _tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+        _llm_model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            torch_dtype=torch.float16,
+            device_map="auto",
+            trust_remote_code=True
+        )
+        print(f"✅ Local model loaded in {time.time() - t0:.2f} seconds.")
+        _print_rocm_smi("Post-Model Load")
+    except Exception as e:
+        print(f"❌ Failed to load LLM {model_id}: {e}")
+        raise RuntimeError(f"Failed to load LLM {model_id}: {e}") from e
+
+    # 3. Warm up GPU kernels
+    print("🚀 [Startup] Warming up GPU kernels...")
+    t_warm = time.time()
+    try:
+        warmup_inputs = _tokenizer("warmup", return_tensors="pt").to(_llm_model.device)
+        with torch.no_grad():
+            _ = _llm_model.generate(**warmup_inputs, max_new_tokens=32, do_sample=False)
+        torch.cuda.synchronize()
+        print(f"✅ GPU kernels warmed up in {time.time() - t_warm:.2f} seconds.")
+    except Exception as e:
+        print(f"⚠️ GPU kernel warmup failed: {e}")
+
+    # Initialize cache
+    _cache = SemanticCache(CACHE_PATH)
+
+    # Calibrate risk thresholds based on actual data
+    calibrate_risk_thresholds()
+
+def get_health_stats() -> dict:
+    global news_search_failures, news_empty_results, latency_samples, cache_hits, total_queries, _llm_model
+    p50_latency = 0.0
+    if latency_samples:
+        p50_latency = float(np.median(latency_samples))
+    cache_hit_rate = 0.0
+    if total_queries > 0:
+        cache_hit_rate = float(cache_hits) / total_queries
+    return {
+        "news_search_failures": news_search_failures,
+        "news_empty_results": news_empty_results,
+        "p50_latency_ms": round(p50_latency, 2),
+        "cache_hit_rate": round(cache_hit_rate, 4),
+        "llm_loaded": _llm_model is not None
+    }
+
+def clean_response_text(text: str) -> str:
+    if not text:
+        return ""
+    # Remove bold/italic markup
+    text = re.sub(r"\*\*|__", "", text)
+    # Remove headers
+    text = re.sub(r"^#+\s*", "", text, flags=re.MULTILINE)
+    # Split into lines and strip list/numbered markers
+    lines = []
+    for line in text.splitlines():
+        line_stripped = line.strip()
+        if not line_stripped:
+            continue
+        line_cleaned = re.sub(r"^[\-\*\+]\s+", "", line_stripped)
+        line_cleaned = re.sub(r"^\d+\.\s+", "", line_cleaned)
+        if line_cleaned:
+            lines.append(line_cleaned)
+    joined = " ".join(lines)
+    joined = re.sub(r"\s+", " ", joined).strip()
+    return joined
+
+def truncate_to_last_sentence(text: str) -> str:
+    if not text:
+        return ""
+    text = text.strip()
+    matches = list(re.finditer(r'[.!?](?=\s|$)', text))
+    if not matches:
+        return text
+    return text[:matches[-1].end()].strip()
+
+def get_llm_model() -> str:
+    return os.environ.get("LLM_MODEL", "Qwen/Qwen2.5-7B-Instruct")
+
+def get_cache_ttl_hours() -> float:
+    try:
+        return float(os.environ.get("KNOWRISK_CACHE_TTL_HOURS", "6.0"))
+    except ValueError:
+        return 6.0
+
+def _get_cache() -> SemanticCache:
+    global _cache
+    if _cache is None:
+        _cache = SemanticCache(CACHE_PATH)
+    return _cache
+
+def _get_sentence_transformer():
+    global _sentence_transformer
+    if _sentence_transformer is None:
+        from sentence_transformers import SentenceTransformer
+        _sentence_transformer = SentenceTransformer("all-MiniLM-L6-v2")
+    return _sentence_transformer
+
+def _get_llm():
+    global _tokenizer, _llm_model
+    if _llm_model is None or _tokenizer is None:
+        raise RuntimeError("LLM not initialized! Call init_models() first.")
+    return _tokenizer, _llm_model
+
+def get_data_summary_stats() -> dict:
+    try:
+        suppliers = _load_suppliers()
+        components = list(suppliers.values())
+        count = len(components)
+        single_source = sum(1 for c in components if c.get("single_source", False))
+        export_ctrl = sum(1 for c in components if c.get("export_controlled", False))
+        lead_times = [c.get("lead_time_days", 0) for c in components]
+        median_lead = 0
+        if lead_times:
+            median_lead = int(np.median(lead_times))
+        return {
+            "components_count": count,
+            "single_source_count": single_source,
+            "export_controlled_count": export_ctrl,
+            "median_lead_time": median_lead
+        }
+    except Exception as e:
+        print(f"⚠️ Error computing data stats: {e}")
+        return {
+            "components_count": 0,
+            "single_source_count": 0,
+            "export_controlled_count": 0,
+            "median_lead_time": 0
+        }
 
 def _load_suppliers() -> dict:
     global _suppliers
@@ -65,171 +350,215 @@ def _print_rocm_smi(stage_name: str):
         print(f"rocm-smi execution failed: {e}")
     print("=" * 60)
 
-def _get_llm():
-    global _tokenizer, _llm_model
-    if _llm_model is None:
-        model_id = get_llm_model()
-        print("=" * 60)
-        print("🚀 [ROCm LLM Startup] Initializing local Hugging Face model...")
-        print(f"   PyTorch ROCm/CUDA available: {torch.cuda.is_available()}")
-        if torch.cuda.is_available():
-            print(f"   AMD GPU detected: {torch.cuda.get_device_name(0)}")
-        else:
-            print("   ⚠️ WARNING: No GPU detected by PyTorch, falling back to CPU!")
-        print(f"   Loading {model_id} onto GPU...")
-        print("=" * 60)
-        
-        t0 = time.time()
-        _print_rocm_smi("Pre-Model Load")
-        _tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
-        _llm_model = AutoModelForCausalLM.from_pretrained(
-            model_id,
-            torch_dtype=torch.float16,
-            device_map="auto",
-            trust_remote_code=True
-        )
-        print(f"✅ Local model loaded successfully in {time.time() - t0:.2f} seconds.")
-        _print_rocm_smi("Post-Model Load")
-    return _tokenizer, _llm_model
-
-def get_llm_model() -> str:
-    return os.environ.get("LLM_MODEL", "Qwen/Qwen2.5-7B-Instruct")
-
-
 # ── Feature extraction for a supplier component ───────────────────────────
-
 COUNTRY_GEO_RISK = {
     "Taiwan": 0.75, "South Korea": 0.40, "Japan": 0.25,
     "Netherlands": 0.15, "USA": 0.10, "China": 0.65,
     "Germany": 0.10, "Malaysia": 0.30, "Vietnam": 0.35, "Israel": 0.45,
 }
 
-def _build_feature_row(component: dict, features: list[str]) -> pd.DataFrame:
-    """Map a supplier component dict to model feature vector.
+_risk_threshold_critical = 0.5298
+_risk_threshold_high     = 0.3959
+_risk_threshold_medium   = 0.1457
 
-    Feature names must match classifier/feature_columns.json exactly.
-    The classifier was trained on DataCo features known at order time:
-    scheduled_ship_days, discount_rate, high_discount_flag, order_value,
-    benefit_per_order, shipping_mode_enc, market_geo_risk, category_risk,
-    product_price_log, order_quantity.
+def calibrate_risk_thresholds():
     """
-    geo_risk = COUNTRY_GEO_RISK.get(component.get("country", ""), 0.35)
-    lead_days = component.get("lead_time_days", 30)
-    tier = component.get("tier", 3)
-    single_src = component.get("single_source", False)
-    export_ctrl = component.get("export_controlled", False)
-
-    # Map supplier attributes to DataCo-analogue features
-    # scheduled_ship_days: longer lead time = riskier (mapped to 1-6 day scale)
-    sched_days = min(6, max(1, round(lead_days / 45)))
-    # shipping_mode_enc: 3=Standard (high-risk), 0=Same Day (low-risk)
-    ship_enc = 3 if lead_days > 90 else (2 if lead_days > 45 else 1)
-    # discount_rate: export-controlled or single-source = cost premium (anomaly signal)
-    discount = 0.35 if (single_src or export_ctrl) else 0.10
-    # benefit_per_order: single-source suppliers have pricing power -> lower margins
-    benefit = -100.0 if single_src else (50.0 if tier == 3 else 20.0)
-
-    raw = {
-        "scheduled_ship_days": float(sched_days),
-        "discount_rate":       discount,
-        "high_discount_flag":  1 if discount > 0.3 else 0,
-        "order_value":         min(lead_days * 50, 10000.0),
-        "benefit_per_order":   benefit,
-        "shipping_mode_enc":   float(ship_enc),
-        "market_geo_risk":     geo_risk,
-        "category_risk":       0.5 if tier == 1 else (0.3 if tier == 2 else 0.2),
-        "product_price_log":   np.log1p(lead_days * 20),
-        "order_quantity":      float(max(1, 5 - tier)),
-    }
-
-    row = {f: raw.get(f, 0.0) for f in features}
-    return pd.DataFrame([row], columns=features)
-
-
-# ── Risk label helper ─────────────────────────────────────────────────────
+    Calibrate risk thresholds using quantiles over suppliers data.
+    These are rank-based (top 10% critical, next 20% high, next 30% medium, bottom 40% low)
+    rather than absolute severity values.
+    """
+    global _risk_threshold_critical, _risk_threshold_high, _risk_threshold_medium
+    try:
+        suppliers = _load_suppliers()
+        scores = sorted([c.get("risk_score", 0.0) for c in suppliers.values()])
+        if not scores:
+            return
+        n = len(scores)
+        idx_crit = max(0, n - 5)
+        idx_high = max(0, n - 15)
+        idx_med = max(0, n - 30)
+        
+        _risk_threshold_critical = scores[idx_crit]
+        _risk_threshold_high = scores[idx_high]
+        _risk_threshold_medium = scores[idx_med]
+        
+        print(f"📊 [Calibration] Recalibrated risk thresholds based on {n} components:")
+        print(f"   - CRITICAL (top 10%) >= {_risk_threshold_critical:.4f}")
+        print(f"   - HIGH (next 20%)    >= {_risk_threshold_high:.4f}")
+        print(f"   - MEDIUM (next 30%)  >= {_risk_threshold_medium:.4f}")
+        print(f"   - LOW (bottom 40%)   <  {_risk_threshold_medium:.4f}")
+    except Exception as e:
+        print(f"⚠️ Risk threshold calibration failed: {e}")
 
 def _risk_label(score: float) -> str:
-    if score >= 0.70:
+    global _risk_threshold_critical, _risk_threshold_high, _risk_threshold_medium
+    if score >= _risk_threshold_critical:
         return "CRITICAL"
-    elif score >= 0.50:
+    elif score >= _risk_threshold_high:
         return "HIGH"
-    elif score >= 0.30:
+    elif score >= _risk_threshold_medium:
         return "MEDIUM"
     else:
         return "LOW"
 
-
 # ── LLM explanation ───────────────────────────────────────────────────────
 
-def _generate_explanation(component: dict, risk_score: float, risk_label: str,
-                           feature_row: dict) -> str:
-    """Generate a plain-language risk explanation directly using the local ROCm LLM."""
-    try:
-        tokenizer, model = _get_llm()
-    except Exception as e:
-        return f"[LLM initialization failed: {e}] Risk score {risk_score:.2f} ({risk_label}). " \
-               f"Component sourced from {component['country']} with " \
-               f"{'single-source' if component['single_source'] else 'multi-source'} supply."
+def _generate_explanation(component: dict, risk_score: float, risk_label: str) -> dict:
+    """Generate a plain-language risk explanation, using semantic cache and news search."""
+    global total_queries, cache_hits, news_search_failures, news_empty_results
+    total_queries += 1
+    t0 = time.time()
+    news_grounded = False
+    
+    geo_risk = COUNTRY_GEO_RISK.get(component.get("country", ""), 0.35)
+    prompt = f"""Component Facts:
+- Name: {component['name']}
+- Category: {component['category']}
+- Tier: {component['tier']} (1=most critical)
+- Country of origin: {component['country']}
+- Single-source supplier: {'Yes' if component['single_source'] else 'No'}
+- Export controlled: {'Yes' if component['export_controlled'] else 'No'}
+- Supply lead time: {component['lead_time_days']} days
+- Dependencies: {len(component.get('dependencies', []))} upstream components
 
-    prompt = f"""You are a semiconductor supply-chain risk analyst. Analyze the following component and provide a concise, actionable risk assessment in 3-4 sentences.
-
-Component: {component['name']}
-Category: {component['category']}
-Tier: {component['tier']} (1=most critical)
-Country of origin: {component['country']}
-Single-source supplier: {component['single_source']}
-Export controlled: {component['export_controlled']}
-Lead time: {component['lead_time_days']} days
-Dependencies: {len(component.get('dependencies', []))} upstream components
-
-ML Risk Score: {risk_score:.2f} / 1.00  ({risk_label})
-
-Key risk drivers:
-- Geographic risk (country): {feature_row.get('market_geo_risk', 0):.2f}
+Key qualitative risk drivers:
+- Geographic risk (country): {geo_risk:.2f}
 - Single-source vulnerability: {'Yes' if component['single_source'] else 'No'}
 - Export control exposure: {'Yes' if component['export_controlled'] else 'No'}
 - Supply lead time pressure: {component['lead_time_days']} days
 
-Provide: (1) the primary risk factor, (2) potential supply disruption scenario, (3) a concrete mitigation recommendation. Be specific and concise."""
+Explain the primary qualitative risk factors, describe a potential supply disruption scenario based on these facts, and recommend a concrete mitigation option."""
 
+    # Namespace by component ID to prevent cross-component cache collisions
+    namespace = component["id"]
+
+    # 1. Semantic cache lookup
     try:
-        _print_rocm_smi("Start of Explanation Generation")
+        cache = _get_cache()
+        transformer = _get_sentence_transformer()
+        q_emb = transformer.encode(prompt)
+        ttl = get_cache_ttl_hours()
+        cached_res, cached_news = cache.get(namespace, prompt, q_emb, ttl)
+        if cached_res is not None:
+            cache_hits += 1
+            latency_ms = round((time.time() - t0) * 1000.0, 2)
+            return {
+                "text": cached_res,
+                "source": "cache",
+                "latency_ms": latency_ms,
+                "news_grounded": cached_news
+            }
+    except Exception as e:
+        print(f"⚠️ Cache read error: {e}")
+
+    # 2. Live News search
+    news_context = ""
+    try:
+        query = f"{component.get('country', '')} {component.get('name', '')} semiconductor supply chain news"
+        from ddgs import DDGS
+        
+        def _search():
+            with DDGS() as ddgs:
+                return list(ddgs.text(query, max_results=3))
+                
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_search)
+            results = future.result(timeout=1.5)
+            
+        if results:
+            headlines = []
+            for r in results:
+                title = r.get("title", "").strip()
+                href = r.get("href", "").strip().lower()
+                if href.endswith(".pdf"):
+                    continue
+                if len(title) < 20:
+                    continue
+                headlines.append(title)
+            headlines = headlines[:3]
+            if headlines:
+                news_context = "\nRecent News Context:\n" + "\n".join(f"- {h}" for h in headlines) + "\n"
+                news_grounded = True
+            else:
+                news_empty_results += 1
+        else:
+            news_empty_results += 1
+    except Exception as e:
+        news_search_failures += 1
+        print(f"⚠️ News search failed/timed out: {e}")
+        news_grounded = False
+
+    system_msg = (
+        "You are a semiconductor supply-chain risk analyst. Answer in exactly three sentences. "
+        "Provide a concise, plain prose assessment of the qualitative risk factors for the given component. "
+        "Do not use markdown, bold text, headers, lists, or bullets. Do not reference the ML risk score or risk label."
+    )
+    if news_context:
+        system_msg += f"\nGround your response in the following real-time news:\n{news_context}"
+
+    # 3. Native inference
+    try:
+        tokenizer, model = _get_llm()
+        
         messages = [
-            {"role": "system", "content": "You are an expert semiconductor supply chain risk analyst working for an AMD hardware team. Provide precise, actionable analysis."},
+            {"role": "system", "content": system_msg},
             {"role": "user", "content": prompt},
         ]
         text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
 
+        _print_rocm_smi("Start of Explanation Generation")
         with torch.no_grad():
             generated_ids = model.generate(
                 **model_inputs,
-                max_new_tokens=300,
-                temperature=0.3,
-                do_sample=True
+                max_new_tokens=120,
+                do_sample=False
             )
 
         generated_ids = [
             output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
         ]
-        response = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
+        response_text = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
         _print_rocm_smi("End of Explanation Generation")
-        return response.strip()
+        
+        cleaned_text = clean_response_text(response_text)
+        cleaned_text = truncate_to_last_sentence(cleaned_text)
+        
+        # Cache the result
+        try:
+            cache.add(namespace, prompt, q_emb, cleaned_text, news_grounded)
+        except Exception as e:
+            print(f"⚠️ Failed to add to cache: {e}")
+            
+        latency_ms = round((time.time() - t0) * 1000.0, 2)
+        _update_latency_stat(latency_ms)
+        
+        return {
+            "text": cleaned_text,
+            "source": "mi300x",
+            "latency_ms": latency_ms,
+            "news_grounded": news_grounded
+        }
     except Exception as e:
-        return f"[LLM local inference failed: {e}] Risk score {risk_score:.2f} ({risk_label}). " \
-               f"Component sourced from {component['country']} with " \
-               f"{'single-source' if component['single_source'] else 'multi-source'} supply."
-
+        fallback_text = f"Qualitative risk analysis for {component['name']} ( Tier {component['tier']}, sourced from {component['country']} ) is currently offline due to inference issues."
+        cleaned_fallback = clean_response_text(fallback_text)
+        cleaned_fallback = truncate_to_last_sentence(cleaned_fallback)
+        latency_ms = round((time.time() - t0) * 1000.0, 2)
+        _update_latency_stat(latency_ms)
+        return {
+            "text": f"[LLM local inference failed: {e}] " + cleaned_fallback,
+            "source": "synthetic",
+            "latency_ms": latency_ms,
+            "news_grounded": False
+        }
 
 # ── Public API ────────────────────────────────────────────────────────────
 
 def analyze_component(component_id: str) -> dict:
     """
     Full risk analysis for a single component.
-    Returns structured dict with classifier score + LLM explanation.
     """
     suppliers   = _load_suppliers()
-    model, features = _load_classifier()
 
     if component_id not in suppliers:
         raise ValueError(f"Unknown component: {component_id}. "
@@ -237,21 +566,11 @@ def analyze_component(component_id: str) -> dict:
 
     component = suppliers[component_id]
 
-    # ── Classifier inference ──────────────────────────────────────────────
-    X = _build_feature_row(component, features)
-    prob = float(model.predict_proba(X)[0][1])
-
-    # Blend with heuristic risk_score from the graph for richer signal
-    graph_score  = component.get("risk_score", prob)
-    final_score  = round(0.6 * prob + 0.4 * graph_score, 4)
+    final_score  = round(component.get("risk_score", 0.0), 4)
     risk_label   = _risk_label(final_score)
 
-    feature_vals = X.iloc[0].to_dict()
+    explanation = _generate_explanation(component, final_score, risk_label)
 
-    # ── LLM explanation ───────────────────────────────────────────────────
-    explanation = _generate_explanation(component, final_score, risk_label, feature_vals)
-
-    # ── Dependency risk summary ───────────────────────────────────────────
     dep_risks = []
     for dep_id in component.get("dependencies", []):
         if dep_id in suppliers:
@@ -274,83 +593,168 @@ def analyze_component(component_id: str) -> dict:
         "export_controlled": component["export_controlled"],
         "lead_time_days":  component["lead_time_days"],
         "risk_score":      final_score,
-        "classifier_prob": round(prob, 4),
-        "graph_risk_score": round(graph_score, 4),
         "risk_label":      risk_label,
         "llm_explanation": explanation,
-        "feature_values":  {k: round(v, 4) for k, v in feature_vals.items()},
         "dependency_risks": dep_risks,
     }
 
-
-def answer_query(query: str, context_component_id: str | None = None) -> str:
+def answer_query(query: str, context_component_id: str | None = None) -> dict:
     """
     Free-text Q&A about supply-chain risk.
-    Optionally anchored to a specific component.
     """
-    try:
-        tokenizer, model = _get_llm()
-    except Exception as e:
-        return f"[LLM local initialization failed: {e}]"
-
+    global total_queries, cache_hits, news_search_failures, news_empty_results
+    total_queries += 1
+    t0 = time.time()
+    news_grounded = None  # None indicates search not attempted (default)
+    
     system_msg = (
         "You are a semiconductor supply-chain risk analyst with deep expertise in "
         "geopolitical risk, export controls, and semiconductor manufacturing. "
-        "Answer questions concisely and with specific, actionable insights. "
-        "Reference real supply chain dynamics when relevant."
+        "Answer questions in plain prose. Do not use markdown, bold text, lists, or headers. "
+        "Be specific and concise."
     )
-
+    
     context = ""
+    component = None
     if context_component_id:
         try:
             suppliers = _load_suppliers()
             if context_component_id in suppliers:
-                comp = suppliers[context_component_id]
+                component = suppliers[context_component_id]
                 context = (
-                    f"\nContext — Currently viewing component: {comp['name']} "
-                    f"(Tier {comp['tier']}, {comp['country']}, "
-                    f"risk_score={comp.get('risk_score',0):.2f})\n"
+                    f"\nContext — Currently viewing component: {component['name']} "
+                    f"(Tier {component['tier']}, {component['country']}, "
+                    f"risk_score={component.get('risk_score',0):.2f})\n"
                 )
         except Exception:
             pass
 
+    full_prompt = context + query
+    namespace = context_component_id if context_component_id else "global"
+
+    # 1. Semantic cache lookup
     try:
-        _print_rocm_smi("Start of Q&A Generation")
+        cache = _get_cache()
+        transformer = _get_sentence_transformer()
+        q_emb = transformer.encode(full_prompt)
+        ttl = get_cache_ttl_hours()
+        cached_res, cached_news = cache.get(namespace, full_prompt, q_emb, ttl)
+        if cached_res is not None:
+            cache_hits += 1
+            latency_ms = round((time.time() - t0) * 1000.0, 2)
+            return {
+                "text": cached_res,
+                "source": "cache",
+                "latency_ms": latency_ms,
+                "news_grounded": cached_news
+            }
+    except Exception as e:
+        print(f"⚠️ Cache read error: {e}")
+
+    # 2. News search
+    news_context = ""
+    if component:
+        news_grounded = False  # Set to False as it is now attempted
+        try:
+            search_query = f"{component.get('country', '')} {component.get('name', '')} semiconductor supply chain news"
+            from ddgs import DDGS
+            
+            def _search():
+                with DDGS() as ddgs:
+                    return list(ddgs.text(search_query, max_results=3))
+                    
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(_search)
+                results = future.result(timeout=1.5)
+                
+            if results:
+                headlines = []
+                for r in results:
+                    title = r.get("title", "").strip()
+                    href = r.get("href", "").strip().lower()
+                    if href.endswith(".pdf"):
+                        continue
+                    if len(title) < 20:
+                        continue
+                    headlines.append(title)
+                headlines = headlines[:3]
+                if headlines:
+                    news_context = "\nRecent News Context:\n" + "\n".join(f"- {h}" for h in headlines) + "\n"
+                    news_grounded = True
+                else:
+                    news_empty_results += 1
+            else:
+                news_empty_results += 1
+        except Exception as e:
+            news_search_failures += 1
+            print(f"⚠️ News search failed: {e}")
+            news_grounded = False
+
+    if news_context:
+        system_msg += f"\nGround your response in the following real-time news:\n{news_context}"
+
+    # 3. LLM call
+    try:
+        tokenizer, model = _get_llm()
+        
         messages = [
             {"role": "system", "content": system_msg},
-            {"role": "user",   "content": context + query},
+            {"role": "user",   "content": full_prompt},
         ]
         text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
 
+        _print_rocm_smi("Start of Q&A Generation")
         with torch.no_grad():
             generated_ids = model.generate(
                 **model_inputs,
-                max_new_tokens=400,
-                temperature=0.4,
-                do_sample=True
+                max_new_tokens=160,
+                do_sample=False
             )
 
         generated_ids = [
             output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
         ]
-        response = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
+        response_text = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
         _print_rocm_smi("End of Q&A Generation")
-        return response.strip()
-    except Exception as e:
-        return f"[LLM query failed: {e}]"
+        
+        cleaned_text = clean_response_text(response_text)
+        cleaned_text = truncate_to_last_sentence(cleaned_text)
+        
+        try:
+            cache.add(namespace, full_prompt, q_emb, cleaned_text, news_grounded)
+        except Exception as e:
+            print(f"⚠️ Failed to add to cache: {e}")
 
+        latency_ms = round((time.time() - t0) * 1000.0, 2)
+        _update_latency_stat(latency_ms)
+        
+        return {
+            "text": cleaned_text,
+            "source": "mi300x",
+            "latency_ms": latency_ms,
+            "news_grounded": news_grounded
+        }
+    except Exception as e:
+        fallback_text = f"Supply chain analysis for {component['name'] if component else 'semiconductor supply chain'} is currently offline."
+        cleaned_fallback = clean_response_text(fallback_text)
+        cleaned_fallback = truncate_to_last_sentence(cleaned_fallback)
+        latency_ms = round((time.time() - t0) * 1000.0, 2)
+        _update_latency_stat(latency_ms)
+        return {
+            "text": f"[LLM query failed: {e}] " + cleaned_fallback,
+            "source": "synthetic",
+            "latency_ms": latency_ms,
+            "news_grounded": False
+        }
 
 def list_components() -> list[dict]:
-    """Return all components as a list."""
     suppliers = _load_suppliers()
     return list(suppliers.values())
-
-
-# ── CLI test ──────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     component_id = sys.argv[1] if len(sys.argv) > 1 else "COMP-001"
     print(f"Analyzing {component_id}...")
+    init_models()
     result = analyze_component(component_id)
     print(json.dumps(result, indent=2))

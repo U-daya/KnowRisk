@@ -45,3 +45,8 @@ ENV/
 .DS_Store
 .vscode/settings.json
 classifier/risk_model.joblib
+
+# Cache and logs
+llm_agent/cache.npz
+llm_agent/cache.npz.tmp
+llm_agent/vllm.log

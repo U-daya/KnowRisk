@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# NOT USED IN THE APP. Trained on the DataCo retail shipment dataset; the
+#  label y = (scheduled_ship_days >= 4) & (shipping_mode_enc >= 2) is a
+#  deterministic function of two input features, so reported metrics of
+#  1.000 reflect leakage, not skill. Retained for reference.
 """
 train_risk_model.py
 Trains a GradientBoostingClassifier on the DataCo Supply Chain dataset.

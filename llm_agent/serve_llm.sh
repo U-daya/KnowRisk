@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# DEAD: the app runs the model in-process via transformers. Retained for reference.
 # serve_llm.sh — Launch vLLM with an OpenAI-compatible API on ROCm
 #
 # Usage:

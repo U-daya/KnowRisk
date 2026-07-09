@@ -1,14 +1,6 @@
 #!/usr/bin/env python3
 """
 app.py — KnowRisk FastAPI Backend
-
-Environment variables required:
-  LLM_BASE_URL   e.g. http://localhost:8001/v1
-  LLM_MODEL      e.g. Qwen/Qwen2.5-70B-Instruct
-
-Run:
-  LLM_BASE_URL=http://localhost:8001/v1 LLM_MODEL=Qwen/Qwen2.5-70B-Instruct \
-    uvicorn backend.app:app --host 0.0.0.0 --port 8000
 """
 
 import json
@@ -24,7 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 # ── Path setup ────────────────────────────────────────────────────────────
-REPO_ROOT = Path(__file__).parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from llm_agent import agent as llm_agent
@@ -40,13 +32,29 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# CORS configuration
+env_mode = os.environ.get("KNOWRISK_ENV", "production")
+if env_mode == "development":
+    allow_origins = ["http://localhost:5173"]
+else:
+    allow_origins = []
+
+print(f"CORS mode: {env_mode}")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.on_event("startup")
+def startup_event():
+    print("🚀 Starting KnowRisk application...")
+    # Eagerly warm up and load local models
+    llm_agent.init_models()
+    print("✅ KnowRisk application started successfully.")
 
 # ── Request/Response models ────────────────────────────────────────────────
 
@@ -70,24 +78,22 @@ async def serve_dashboard():
 
 @app.get("/api/health")
 async def health():
+    stats = llm_agent.get_health_stats()
+    gpu_available, gpu_name = llm_agent.get_gpu_info()
+    data_stats = llm_agent.get_data_summary_stats()
     return {
         "status": "ok",
-        "llm_base_url": os.environ.get("LLM_BASE_URL", "NOT SET"),
-        "llm_model":    os.environ.get("LLM_MODEL",    "NOT SET"),
-        "gpu":          "AMD MI300X (ROCm)",
+        "llm_model":    llm_agent.get_llm_model(),
+        "gpu":          gpu_name,
+        "gpu_available": gpu_available,
+        "cache_hit_rate": stats["cache_hit_rate"],
+        "p50_latency_ms": stats["p50_latency_ms"],
+        "news_search_failures": stats["news_search_failures"],
+        "news_empty_results": stats.get("news_empty_results", 0),
+        "llm_loaded": stats["llm_loaded"],
+        # Real supplier component counts
+        "data_summary": data_stats,
     }
-
-
-@app.get("/api/model-metrics")
-async def model_metrics():
-    """Return classifier training metrics."""
-    if not METRICS_PATH.exists():
-        raise HTTPException(
-            status_code=404,
-            detail="metrics.json not found — run classifier/train_risk_model.py first",
-        )
-    with open(METRICS_PATH) as f:
-        return json.load(f)
 
 
 @app.get("/api/components")
@@ -125,10 +131,7 @@ async def get_risk(component_id: str):
     - Dependency risk summary
     """
     try:
-        t0 = time.time()
-        result = llm_agent.analyze_component(component_id)
-        result["analysis_time_seconds"] = round(time.time() - t0, 2)
-        return result
+        return llm_agent.analyze_component(component_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except FileNotFoundError as e:
@@ -143,13 +146,7 @@ async def query(request: QueryRequest):
     if not request.query or len(request.query.strip()) < 3:
         raise HTTPException(status_code=400, detail="Query must be at least 3 characters")
     try:
-        answer = llm_agent.answer_query(request.query, request.component_id)
-        return {
-            "query":        request.query,
-            "answer":       answer,
-            "model":        llm_agent.get_llm_model(),
-            "component_id": request.component_id,
-        }
+        return llm_agent.answer_query(request.query, request.component_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Query failed: {e}")
 
