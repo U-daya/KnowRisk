@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-# NOT USED IN THE APP. Trained on the DataCo retail shipment dataset; the
-#  label y = (scheduled_ship_days >= 4) & (shipping_mode_enc >= 2) is a
-#  deterministic function of two input features, so reported metrics of
-#  1.000 reflect leakage, not skill. Retained for reference.
+# NOT USED IN THE APP. The real model trains on DataCo retail shipment data and scores ~0.70 accuracy; the synthetic fallback (used when the DataCo CSV is absent) derives its label from two of its own input features and reports 1.000, which is leakage. Either way the model is not used by the app.
 """
 train_risk_model.py
 Trains a GradientBoostingClassifier on the DataCo Supply Chain dataset.
@@ -11,7 +8,7 @@ Falls back to synthetic data if the CSV is missing.
 Outputs:
   classifier/risk_model.joblib
   classifier/feature_columns.json
-  classifier/metrics.json
+  classifier/metrics.json or classifier/metrics.synthetic.json
 """
 
 import json
@@ -187,8 +184,10 @@ def generate_synthetic_data(n: int = 5000) -> tuple[pd.DataFrame, pd.Series, str
 def main():
     if CSV_PATH.exists():
         X, y, data_source = load_real_data()
+        metrics_save_path = METRICS_PATH
     else:
         X, y, data_source = generate_synthetic_data()
+        metrics_save_path = SCRIPT_DIR / "metrics.synthetic.json"
 
     print(f"\n🔧 Training GradientBoostingClassifier...")
     X_train, X_test, y_train, y_test = train_test_split(
@@ -248,9 +247,9 @@ def main():
         json.dump(X.columns.tolist(), f, indent=2)
     print(f"💾 Features saved → {FEATURES_PATH}")
 
-    with open(METRICS_PATH, "w") as f:
+    with open(metrics_save_path, "w") as f:
         json.dump(metrics, f, indent=2)
-    print(f"💾 Metrics saved → {METRICS_PATH}")
+    print(f"💾 Metrics saved → {metrics_save_path}")
 
     if data_source == "synthetic_fallback":
         print("\n⚠️  WARNING: data_source=synthetic_fallback. Place DataCoSupplyChainDataset.csv")

@@ -265,6 +265,11 @@ def clean_response_text(text: str) -> str:
             lines.append(line_cleaned)
     joined = " ".join(lines)
     joined = re.sub(r"\s+", " ", joined).strip()
+    # Strip "Word:" or "Two Words:" label-colon patterns that survive bullet removal.
+    # These are artifacts of the model producing structured lists as prose.
+    # Use a capturing group for the boundary (sentence end or start of string)
+    # because Python re requires fixed-width lookbehind.
+    joined = re.sub(r"([.!?]\s+|^)[A-Z][a-z]+(?: [A-Z][a-z]+)?:\s+", r"\1", joined)
     return joined
 
 def truncate_to_last_sentence(text: str) -> str:
@@ -401,6 +406,58 @@ def _risk_label(score: float) -> str:
     else:
         return "LOW"
 
+# ── Shared news search helper ──────────────────────────────────────────────
+
+def _ddg_search(search_query: str, timeout: float = 1.5) -> list[str]:
+    """
+    Run a DuckDuckGo search in a daemon thread and return filtered headlines.
+    Returns [] immediately if the deadline passes — the worker thread is not
+    joined; it runs to completion in the background and is discarded.
+
+    The socket-level timeout on the DDGS client ensures the underlying HTTP
+    request dies at the source (connect + read) rather than merely being
+    abandoned at the future level while the TCP teardown blocks.
+
+    Increments news_search_failures on exception, news_empty_results when
+    DDG returns results that all fail filters. Caller reads the return value
+    to determine news_grounded.
+    """
+    global news_search_failures, news_empty_results
+    from ddgs import DDGS
+
+    def _fetch():
+        # timeout= sets httpx connect+read timeout so the socket dies at source
+        with DDGS(timeout=timeout) as ddgs:
+            return list(ddgs.text(search_query, max_results=3))
+
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(_fetch)
+    # Shut down the executor immediately without waiting for the thread.
+    executor.shutdown(wait=False)
+    try:
+        results = future.result(timeout=timeout)
+    except Exception as e:
+        news_search_failures += 1
+        print(f"⚠️ News search failed/timed out: {e}")
+        return []
+
+    headlines = []
+    for r in results:
+        title = r.get("title", "").strip()
+        href = r.get("href", "").strip().lower()
+        if href.endswith(".pdf"):
+            continue
+        if len(title) < 20:
+            continue
+        headlines.append(title)
+    headlines = headlines[:3]
+    if not headlines and results:
+        # DDG returned rows but all were filtered out
+        news_empty_results += 1
+    elif not results:
+        news_empty_results += 1
+    return headlines
+
 # ── LLM explanation ───────────────────────────────────────────────────────
 
 def _generate_explanation(component: dict, risk_score: float, risk_label: str) -> dict:
@@ -451,41 +508,14 @@ Explain the primary qualitative risk factors, describe a potential supply disrup
     except Exception as e:
         print(f"⚠️ Cache read error: {e}")
 
-    # 2. Live News search
+    # 2. Live news search
     news_context = ""
-    try:
-        query = f"{component.get('country', '')} {component.get('name', '')} semiconductor supply chain news"
-        from ddgs import DDGS
-        
-        def _search():
-            with DDGS() as ddgs:
-                return list(ddgs.text(query, max_results=3))
-                
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(_search)
-            results = future.result(timeout=1.5)
-            
-        if results:
-            headlines = []
-            for r in results:
-                title = r.get("title", "").strip()
-                href = r.get("href", "").strip().lower()
-                if href.endswith(".pdf"):
-                    continue
-                if len(title) < 20:
-                    continue
-                headlines.append(title)
-            headlines = headlines[:3]
-            if headlines:
-                news_context = "\nRecent News Context:\n" + "\n".join(f"- {h}" for h in headlines) + "\n"
-                news_grounded = True
-            else:
-                news_empty_results += 1
-        else:
-            news_empty_results += 1
-    except Exception as e:
-        news_search_failures += 1
-        print(f"⚠️ News search failed/timed out: {e}")
+    search_query = f"{component.get('country', '')} {component.get('name', '')} semiconductor supply chain news"
+    headlines = _ddg_search(search_query)
+    if headlines:
+        news_context = "\nRecent News Context:\n" + "\n".join(f"- {h}" for h in headlines) + "\n"
+        news_grounded = True
+    else:
         news_grounded = False
 
     system_msg = (
@@ -608,10 +638,11 @@ def answer_query(query: str, context_component_id: str | None = None) -> dict:
     news_grounded = None  # None indicates search not attempted (default)
     
     system_msg = (
-        "You are a semiconductor supply-chain risk analyst with deep expertise in "
-        "geopolitical risk, export controls, and semiconductor manufacturing. "
-        "Answer questions in plain prose. Do not use markdown, bold text, lists, or headers. "
-        "Be specific and concise."
+        "You are a semiconductor supply-chain risk analyst. "
+        "Answer in three to four complete sentences of plain prose. "
+        "Do not use markdown, bold text, lists, bullets, headers, or labels followed by colons. "
+        "Do not begin a sentence with a topic label like 'Single Source:' or 'Export Controls:'. "
+        "Write continuous prose only."
     )
     
     context = ""
@@ -624,7 +655,9 @@ def answer_query(query: str, context_component_id: str | None = None) -> dict:
                 context = (
                     f"\nContext — Currently viewing component: {component['name']} "
                     f"(Tier {component['tier']}, {component['country']}, "
-                    f"risk_score={component.get('risk_score',0):.2f})\n"
+                    f"single_source={'Yes' if component.get('single_source') else 'No'}, "
+                    f"export_controlled={'Yes' if component.get('export_controlled') else 'No'}, "
+                    f"lead_time_days={component.get('lead_time_days')}d)\n"
                 )
         except Exception:
             pass
@@ -654,41 +687,12 @@ def answer_query(query: str, context_component_id: str | None = None) -> dict:
     # 2. News search
     news_context = ""
     if component:
-        news_grounded = False  # Set to False as it is now attempted
-        try:
-            search_query = f"{component.get('country', '')} {component.get('name', '')} semiconductor supply chain news"
-            from ddgs import DDGS
-            
-            def _search():
-                with DDGS() as ddgs:
-                    return list(ddgs.text(search_query, max_results=3))
-                    
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(_search)
-                results = future.result(timeout=1.5)
-                
-            if results:
-                headlines = []
-                for r in results:
-                    title = r.get("title", "").strip()
-                    href = r.get("href", "").strip().lower()
-                    if href.endswith(".pdf"):
-                        continue
-                    if len(title) < 20:
-                        continue
-                    headlines.append(title)
-                headlines = headlines[:3]
-                if headlines:
-                    news_context = "\nRecent News Context:\n" + "\n".join(f"- {h}" for h in headlines) + "\n"
-                    news_grounded = True
-                else:
-                    news_empty_results += 1
-            else:
-                news_empty_results += 1
-        except Exception as e:
-            news_search_failures += 1
-            print(f"⚠️ News search failed: {e}")
-            news_grounded = False
+        news_grounded = False
+        search_query = f"{component.get('country', '')} {component.get('name', '')} semiconductor supply chain news"
+        headlines = _ddg_search(search_query)
+        if headlines:
+            news_context = "\nRecent News Context:\n" + "\n".join(f"- {h}" for h in headlines) + "\n"
+            news_grounded = True
 
     if news_context:
         system_msg += f"\nGround your response in the following real-time news:\n{news_context}"

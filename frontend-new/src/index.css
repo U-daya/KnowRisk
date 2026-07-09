@@ -1,0 +1,9 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: ui-monospace, 'SF Mono', 'JetBrains Mono', monospace;
+}
+
+@layer base {
+  body { @apply bg-zinc-950 text-zinc-300; }
+}
