@@ -458,35 +458,31 @@ def _ddg_search(search_query: str, timeout: float = 1.5) -> list[str]:
         news_empty_results += 1
     return headlines
 
-def _parse_structured_explanation(text: str) -> dict[str, str]:
+_EXPLANATION_LABEL_RE = re.compile(
+    r"RISK_FACTOR:\s*(.*?)\s*SCENARIO:\s*(.*?)\s*MITIGATION:\s*(.*)",
+    re.S | re.I,
+)
+
+def _parse_structured_explanation(raw: str) -> dict[str, str] | None:
     """
-    Parse model output that should contain three labeled lines:
-        RISK_FACTOR: <text>
-        SCENARIO: <text>
-        MITIGATION: <text>
-    Returns a dict with keys risk_factor, scenario, mitigation.
-    Any missing field is set to empty string.
+    Parse RAW model output (before clean_response_text) for three labeled
+    fields via a single regex anchored on all three labels. Must run on the
+    raw blob, not on cleaned text — clean_response_text strips "Label:"
+    patterns, which destroys the very markers this parse depends on.
+
+    Returns None on regex match failure (the caller's retry trigger), or a
+    dict with keys risk_factor, scenario, mitigation, each individually
+    passed through clean_response_text.
     """
-    fields: dict[str, str] = {"risk_factor": "", "scenario": "", "mitigation": ""}
-    # Try label-prefixed parsing first
-    for line in text.splitlines():
-        line = line.strip()
-        for key, prefixes in [
-            ("risk_factor", ("RISK_FACTOR:", "RISK FACTOR:")),
-            ("scenario",    ("SCENARIO:",)),
-            ("mitigation",  ("MITIGATION:",)),
-        ]:
-            for prefix in prefixes:
-                if line.upper().startswith(prefix):
-                    fields[key] = line[len(prefix):].strip()
-                    break
-    # If no labels found, fall back to sentence splitting
-    if not any(fields.values()):
-        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
-        fields["risk_factor"] = sentences[0] if len(sentences) > 0 else text
-        fields["scenario"]    = sentences[1] if len(sentences) > 1 else ""
-        fields["mitigation"]  = sentences[2] if len(sentences) > 2 else ""
-    return fields
+    match = _EXPLANATION_LABEL_RE.search(raw)
+    if not match:
+        return None
+    risk_factor, scenario, mitigation = match.groups()
+    return {
+        "risk_factor": clean_response_text(risk_factor),
+        "scenario":    clean_response_text(scenario),
+        "mitigation":  clean_response_text(mitigation),
+    }
 
 
 def _generate_explanation(component: dict, risk_score: float, risk_label: str) -> dict:
@@ -543,8 +539,9 @@ MITIGATION: <one sentence recommending a concrete mitigation action>"""
                 fields = _json.loads(cached_res)
                 if not isinstance(fields, dict):
                     raise ValueError
+                fields.setdefault("parse_failed", False)
             except (ValueError, TypeError):
-                fields = {"risk_factor": cached_res, "scenario": "", "mitigation": ""}
+                fields = {"risk_factor": cached_res, "scenario": "", "mitigation": "", "parse_failed": True}
             return {**fields, "source": "cache", "latency_ms": latency_ms, "news_grounded": cached_news}
     except Exception as e:
         print(f"⚠️ Cache read error: {e}")
@@ -592,29 +589,38 @@ MITIGATION: <one sentence recommending a concrete mitigation action>"""
         _print_rocm_smi("End of Explanation Generation")
         return raw
 
+    def _fields_score(f: dict[str, str] | None) -> int:
+        return sum(1 for v in (f or {}).values() if v)
+
     try:
         import json as _json
         raw = _run_inference()
-        fields = _parse_structured_explanation(clean_response_text(raw))
+        fields = _parse_structured_explanation(raw)
 
-        # Retry once if any required field is empty
-        if not fields["risk_factor"] or not fields["scenario"] or not fields["mitigation"]:
+        # Retry once if the regex failed to match or any field came back empty
+        if fields is None or not all(fields.values()):
             print("⚠️ Structured parse incomplete, retrying inference once")
             raw2 = _run_inference()
-            fields2 = _parse_structured_explanation(clean_response_text(raw2))
-            filled_orig  = sum(1 for v in fields.values()  if v)
-            filled_retry = sum(1 for v in fields2.values() if v)
-            if filled_retry > filled_orig:
-                fields = fields2
+            fields2 = _parse_structured_explanation(raw2)
+            if _fields_score(fields2) > _fields_score(fields):
+                fields, raw = fields2, raw2
+
+        parse_failed = fields is None or not all(fields.values())
+        if parse_failed:
+            fields = {
+                "risk_factor": clean_response_text(raw),
+                "scenario": "",
+                "mitigation": "",
+            }
 
         try:
-            cache.add(namespace, prompt, q_emb, _json.dumps(fields), news_grounded)
+            cache.add(namespace, prompt, q_emb, _json.dumps({**fields, "parse_failed": parse_failed}), news_grounded)
         except Exception as e:
             print(f"⚠️ Failed to add to cache: {e}")
 
         latency_ms = round((time.time() - t0) * 1000.0, 2)
         _update_latency_stat(latency_ms)
-        return {**fields, "source": "mi300x", "latency_ms": latency_ms, "news_grounded": news_grounded}
+        return {**fields, "parse_failed": parse_failed, "source": "mi300x", "latency_ms": latency_ms, "news_grounded": news_grounded}
 
     except Exception as e:
         latency_ms = round((time.time() - t0) * 1000.0, 2)
@@ -623,6 +629,7 @@ MITIGATION: <one sentence recommending a concrete mitigation action>"""
             "risk_factor": f"[LLM inference failed: {e}]",
             "scenario": "",
             "mitigation": "",
+            "parse_failed": True,
             "source": "synthetic",
             "latency_ms": latency_ms,
             "news_grounded": False,

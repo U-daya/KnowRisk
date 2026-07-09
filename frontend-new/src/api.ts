@@ -26,6 +26,7 @@ export interface LLMExplanation {
   risk_factor: string;
   scenario: string;
   mitigation: string;
+  parse_failed: boolean;
   source: 'cache' | 'mi300x' | 'synthetic';
   latency_ms: number;
   news_grounded: boolean | null;

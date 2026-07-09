@@ -41,13 +41,19 @@ def main():
     
     mock_tok.apply_chat_template.return_value = "chat template text"
     
-    # Generate unique output text per call to ensure we can assert fresh generation
+    # Generate unique, properly-labeled output text per call to ensure we can
+    # assert fresh generation. Labeled so the happy path is exercised instead
+    # of the parse-retry path — the collision assertion is what's under test.
     unique_counter = 0
     def mock_batch_decode(*args, **kwargs):
         nonlocal unique_counter
         unique_counter += 1
-        return [f"Unique response {unique_counter} for risk assessment"]
-        
+        return [
+            f"RISK_FACTOR: Unique risk {unique_counter}.\n"
+            f"SCENARIO: Unique scenario {unique_counter}.\n"
+            f"MITIGATION: Unique mitigation {unique_counter}."
+        ]
+
     mock_tok.batch_decode = mock_batch_decode
 
     # Initialize MiniLM (local sentence transformer) but mock out the causal LM to run instantly
@@ -65,13 +71,17 @@ def main():
         response1 = client.get("/api/risk/COMP-001")
         assert response1.status_code == 200, f"COMP-001 failed: {response1.text}"
         r1 = response1.json()
-        print(f"R1: Source={r1['llm_explanation']['source']}, Text='{r1['llm_explanation']['text']}'")
+        print(f"R1: Source={r1['llm_explanation']['source']}, "
+              f"ParseFailed={r1['llm_explanation']['parse_failed']}, "
+              f"RiskFactor='{r1['llm_explanation']['risk_factor'][:40]}'")
 
         print("\n--- GET /api/risk/COMP-017 ---")
         response2 = client.get("/api/risk/COMP-017")
         assert response2.status_code == 200, f"COMP-017 failed: {response2.text}"
         r2 = response2.json()
-        print(f"R2: Source={r2['llm_explanation']['source']}, Text='{r2['llm_explanation']['text']}'")
+        print(f"R2: Source={r2['llm_explanation']['source']}, "
+              f"ParseFailed={r2['llm_explanation']['parse_failed']}, "
+              f"RiskFactor='{r2['llm_explanation']['risk_factor'][:40]}'")
 
         # Extract prompt texts from cache structure to calculate similarity
         assert len(agent._cache.prompts) >= 2, "Expected at least 2 entries in cache prompts"

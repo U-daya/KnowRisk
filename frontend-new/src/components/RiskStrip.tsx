@@ -15,6 +15,21 @@ export default function RiskStrip({ detail, loading }: Props) {
   // Show nothing before any component is selected
   if (!detail && !loading) return null
 
+  if (!loading && detail?.llm_explanation.parse_failed) {
+    return (
+      <div className="flex border-b border-zinc-800 px-4 py-3 max-h-[22vh] overflow-hidden">
+        <div className="flex-1 pl-3" style={{ borderLeft: `2px solid ${BLOCKS[0].borderColor}` }}>
+          <div className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">
+            Risk Factor
+          </div>
+          <p className="text-[12px] leading-snug text-zinc-300">
+            {detail?.llm_explanation.risk_factor ?? ''}
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex gap-6 border-b border-zinc-800 px-4 py-3 max-h-[22vh] overflow-hidden">
       {BLOCKS.map((block) => (
