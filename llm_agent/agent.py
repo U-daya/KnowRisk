@@ -517,9 +517,9 @@ Key qualitative risk drivers:
 - Lead time pressure: {component['lead_time_days']} days
 
 Respond with EXACTLY three labeled lines in this format:
-RISK_FACTOR: <one sentence on the primary qualitative risk driver>
-SCENARIO: <one sentence describing a plausible disruption scenario>
-MITIGATION: <one sentence recommending a concrete mitigation action>"""
+RISK_FACTOR: <one complete sentence, 15-25 words, on the primary qualitative risk driver>
+SCENARIO: <one complete sentence, 15-25 words, describing a plausible disruption scenario>
+MITIGATION: <one complete sentence, 15-25 words, recommending a concrete mitigation action>"""
 
     # Namespace by component ID
     namespace = component["id"]
@@ -559,7 +559,15 @@ MITIGATION: <one sentence recommending a concrete mitigation action>"""
     system_msg = (
         "You are a semiconductor supply-chain risk analyst. "
         "Respond with EXACTLY three labeled lines as instructed. "
-        "Each line must start with its label (RISK_FACTOR:, SCENARIO:, MITIGATION:) followed by one concise sentence. "
+        "Each line must start with its label (RISK_FACTOR:, SCENARIO:, MITIGATION:) followed by exactly one "
+        "complete sentence of 15-25 words — a full clause with a subject and verb, never a short noun phrase "
+        "or fragment. Example of the required shape:\n"
+        "RISK_FACTOR: Heavy reliance on a single Taiwanese foundry leaves this component exposed to regional "
+        "political and natural disaster disruptions.\n"
+        "SCENARIO: A cross-strait conflict or major earthquake could halt fabrication for months, stalling "
+        "downstream production across multiple product lines.\n"
+        "MITIGATION: Qualify a second-source foundry in a different region and begin building buffer inventory "
+        "to cover a six-month supply gap.\n"
         "Do not use markdown, bold, lists, or headers. Do not reference numeric risk scores."
     )
     if news_context:

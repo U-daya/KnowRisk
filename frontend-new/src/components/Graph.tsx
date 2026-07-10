@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useCallback } from 'react'
+import { useEffect, useMemo, useCallback, useRef, useState } from 'react'
 import {
   ReactFlow,
   Background,
@@ -21,6 +21,7 @@ const NODE_H = 34   // compact — 50 short nodes fit; 50 tall ones don't
 const V_GAP = 6
 // tier 3 (raw/logistics) leftmost → tier 1 (critical) rightmost
 const TIER_X: Record<number, number> = { 3: 0, 2: NODE_W + 220, 1: (NODE_W + 220) * 2 }
+const EDGE_FADE_MS = 150
 
 // ── Custom node (module-level for stable reference) ───────────────────────────
 
@@ -34,12 +35,14 @@ function ComponentNode({ data, selected }: NodeProps) {
         style={{ opacity: 0, width: 4, height: 4 }}
       />
       <div
-        className="flex items-center gap-1.5 px-2 bg-zinc-900 border border-zinc-800 rounded-sm"
+        className={`flex items-center gap-1.5 px-2 bg-zinc-900 border rounded-sm ${
+          selected ? 'border-zinc-600' : 'border-zinc-800 hover:border-zinc-600'
+        }`}
         style={{
           width: NODE_W,
           height: NODE_H,
           opacity: data.dimmed ? 0.25 : 1,
-          borderColor: selected ? '#52525b' : '#27272a', // zinc-600 when selected
+          transition: 'border-color 100ms, opacity 150ms',
         }}
       >
         <div
@@ -182,16 +185,51 @@ export default function Graph({ components, selectedId, onSelect }: Props) {
     )
   }, [selectedId, baseNodes, adjacency, setNodes])
 
-  // Only edges touching the selected node are ever rendered
-  const edges = useMemo<Edge[]>(() => {
-    if (!selectedId) return []
-    return baseEdges
+  // Only edges touching the selected node are ever rendered. They fade in on
+  // selection and fade out on deselect, so a just-hidden edge stays mounted
+  // (opacity animating to 0) for EDGE_FADE_MS before it's actually removed.
+  const [edges, setEdges] = useState<Edge[]>([])
+  const fadeOutTimer = useRef<ReturnType<typeof setTimeout>>()
+
+  useEffect(() => {
+    if (fadeOutTimer.current) {
+      clearTimeout(fadeOutTimer.current)
+      fadeOutTimer.current = undefined
+    }
+
+    if (!selectedId) {
+      // Fade whatever is currently shown out, then unmount it
+      setEdges((prev) => prev.map((e) => ({ ...e, style: { ...e.style, opacity: 0 } })))
+      fadeOutTimer.current = setTimeout(() => setEdges([]), EDGE_FADE_MS)
+      return
+    }
+
+    const touching = baseEdges
       .filter((e) => e.source === selectedId || e.target === selectedId)
       .map((e) => ({
         ...e,
-        style: { stroke: '#a1a1aa', strokeWidth: 2 }, // zinc-400
+        style: {
+          stroke: '#a1a1aa', // zinc-400
+          strokeWidth: 2,
+          opacity: 0,
+          transition: `opacity ${EDGE_FADE_MS}ms`,
+        },
       }))
-  }, [baseEdges, selectedId])
+
+    // Mount at opacity 0, then flip to 1 on the next frame so the
+    // transition actually animates instead of snapping in.
+    setEdges(touching)
+    const raf = requestAnimationFrame(() => {
+      setEdges((prev) => prev.map((e) => ({ ...e, style: { ...e.style, opacity: 1 } })))
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [selectedId, baseEdges])
+
+  useEffect(() => {
+    return () => {
+      if (fadeOutTimer.current) clearTimeout(fadeOutTimer.current)
+    }
+  }, [])
 
   const handleNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => onSelect(node.id),

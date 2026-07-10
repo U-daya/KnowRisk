@@ -24,8 +24,8 @@ export default function Sidebar({ components, selectedId, onSelect }: Props) {
             <button
               key={c.id}
               onClick={() => onSelect(c.id)}
-              className={`w-full text-left px-3 py-2 flex items-center gap-2 border-b border-zinc-800/50 ${
-                selected ? 'bg-zinc-900' : ''
+              className={`w-full text-left px-3 py-2 flex items-center gap-2 border-b border-zinc-800/50 transition-colors duration-100 ${
+                selected ? 'bg-zinc-900' : 'bg-zinc-950 hover:bg-zinc-900'
               }`}
             >
               {/* 8px status dot */}
