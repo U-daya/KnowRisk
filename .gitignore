@@ -50,3 +50,4 @@ classifier/risk_model.joblib
 llm_agent/cache.npz
 llm_agent/cache.npz.tmp
 llm_agent/vllm.log
+frontend-new/dist/

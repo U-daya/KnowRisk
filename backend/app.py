@@ -12,7 +12,8 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 # ── Path setup ────────────────────────────────────────────────────────────
@@ -21,9 +22,9 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from llm_agent import agent as llm_agent
 
-FRONTEND_HTML = REPO_ROOT / "frontend" / "index.html"
 METRICS_PATH  = REPO_ROOT / "classifier" / "metrics.json"
 SUPPLIERS_PATH = REPO_ROOT / "data" / "suppliers.json"
+DIST = REPO_ROOT / "frontend-new" / "dist"
 
 # ── FastAPI app ────────────────────────────────────────────────────────────
 app = FastAPI(
@@ -49,6 +50,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
+
 @app.on_event("startup")
 def startup_event():
     print("🚀 Starting KnowRisk application...")
@@ -64,17 +67,6 @@ class QueryRequest(BaseModel):
 
 
 # ── Routes ────────────────────────────────────────────────────────────────
-
-@app.get("/", include_in_schema=False)
-async def serve_dashboard():
-    """Serve the static frontend dashboard."""
-    if FRONTEND_HTML.exists():
-        return FileResponse(str(FRONTEND_HTML), media_type="text/html")
-    return JSONResponse(
-        {"error": "frontend/index.html not found"},
-        status_code=404,
-    )
-
 
 @app.get("/api/health")
 async def health():
@@ -158,6 +150,14 @@ async def get_graph():
         raise HTTPException(status_code=503, detail="suppliers.json not found")
     with open(SUPPLIERS_PATH) as f:
         return json.load(f)
+
+
+@app.get("/{full_path:path}")
+async def spa(full_path: str):
+    """Serve the built SPA for any non-API route (client-side routing)."""
+    if full_path.startswith("api"):
+        raise HTTPException(404, detail="Not found")
+    return FileResponse(DIST / "index.html")
 
 
 if __name__ == "__main__":
