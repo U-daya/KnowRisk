@@ -86,6 +86,17 @@ export default function App() {
     }
   }, [])
 
+  // Submitting a query is a deliberate mode switch to filtering: a non-empty
+  // match takes over the graph from whatever was selected. An empty match
+  // (nothing to show) leaves the current selection untouched.
+  const handleQueryMatch = useCallback((ids: Set<string>) => {
+    setHighlightedIds(ids)
+    if (ids.size > 0) {
+      setSelectedId(null)
+      setRiskDetail(null)
+    }
+  }, [])
+
   const ds = health?.data_summary
 
   return (
@@ -123,7 +134,7 @@ export default function App() {
           riskDetail={riskDetail}
           onSelect={handleSelect}
           highlightedIds={highlightedIds}
-          onMatch={setHighlightedIds}
+          onMatch={handleQueryMatch}
           width={qaWidth}
           onHandlePointerDown={qaHandle.handlePointerDown}
           onHandleDoubleClick={qaHandle.handleDoubleClick}
