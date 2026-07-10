@@ -4,7 +4,6 @@ import {
   Background,
   Controls,
   useNodesState,
-  useEdgesState,
   Handle,
   Position,
   BackgroundVariant,
@@ -21,7 +20,7 @@ const NODE_W = 188
 const NODE_H = 34   // compact — 50 short nodes fit; 50 tall ones don't
 const V_GAP = 6
 // tier 3 (raw/logistics) leftmost → tier 1 (critical) rightmost
-const TIER_X: Record<number, number> = { 3: 0, 2: NODE_W + 120, 1: (NODE_W + 120) * 2 }
+const TIER_X: Record<number, number> = { 3: 0, 2: NODE_W + 220, 1: (NODE_W + 220) * 2 }
 
 // ── Custom node (module-level for stable reference) ───────────────────────────
 
@@ -90,7 +89,7 @@ function buildGraph(components: MergedComponent[]): GraphAssets {
 
   const baseNodes: Node[] = []
   for (const [tier, comps] of byTier.entries()) {
-    const x = TIER_X[tier] ?? tier * (NODE_W + 120)
+    const x = TIER_X[tier] ?? tier * (NODE_W + 220)
     const sorted = [...comps].sort((a, b) => b.risk_score - a.risk_score)
     const totalH = sorted.length * (NODE_H + V_GAP) - V_GAP
     sorted.forEach((c, i) => {
@@ -151,7 +150,6 @@ interface Props {
 
 export default function Graph({ components, selectedId, onSelect }: Props) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
-  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
 
   const { baseNodes, baseEdges, adjacency } = useMemo(
     () => buildGraph(components),
@@ -162,16 +160,14 @@ export default function Graph({ components, selectedId, onSelect }: Props) {
   useEffect(() => {
     if (baseNodes.length === 0) return
     setNodes(baseNodes)
-    setEdges(baseEdges)
-  }, [baseNodes, baseEdges, setNodes, setEdges])
+  }, [baseNodes, setNodes])
 
   // Apply dimming when selection changes
   useEffect(() => {
     if (baseNodes.length === 0) return
     if (!selectedId) {
-      // No selection: reset all to full opacity, all edges to default
+      // No selection: reset all to full opacity
       setNodes(baseNodes)
-      setEdges(baseEdges)
       return
     }
     const connected = adjacency.get(selectedId) ?? new Set<string>()
@@ -184,19 +180,18 @@ export default function Graph({ components, selectedId, onSelect }: Props) {
         data: { ...n.data, dimmed: !relevant.has(n.id) },
       })),
     )
-    setEdges(
-      baseEdges.map((e) => {
-        const touches = e.source === selectedId || e.target === selectedId
-        return {
-          ...e,
-          style: {
-            stroke: touches ? '#71717a' : '#18181b', // zinc-500 highlight, zinc-900 dim
-            strokeWidth: touches ? 1.5 : 1,
-          },
-        }
-      }),
-    )
-  }, [selectedId, baseNodes, baseEdges, adjacency, setNodes, setEdges])
+  }, [selectedId, baseNodes, adjacency, setNodes])
+
+  // Only edges touching the selected node are ever rendered
+  const edges = useMemo<Edge[]>(() => {
+    if (!selectedId) return []
+    return baseEdges
+      .filter((e) => e.source === selectedId || e.target === selectedId)
+      .map((e) => ({
+        ...e,
+        style: { stroke: '#a1a1aa', strokeWidth: 2 }, // zinc-400
+      }))
+  }, [baseEdges, selectedId])
 
   const handleNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => onSelect(node.id),
@@ -209,7 +204,6 @@ export default function Graph({ components, selectedId, onSelect }: Props) {
         nodes={nodes}
         edges={edges}
         onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
         nodeTypes={nodeTypes}
         onNodeClick={handleNodeClick}
         fitView
