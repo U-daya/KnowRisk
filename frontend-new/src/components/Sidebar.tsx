@@ -5,18 +5,36 @@ interface Props {
   components: Component[]
   selectedId: string | null
   onSelect: (id: string) => void
+  width: number
+  onHandlePointerDown: (e: React.PointerEvent) => void
+  onHandleDoubleClick: () => void
 }
 
-export default function Sidebar({ components, selectedId, onSelect }: Props) {
+export default function Sidebar({
+  components,
+  selectedId,
+  onSelect,
+  width,
+  onHandlePointerDown,
+  onHandleDoubleClick,
+}: Props) {
   const sorted = [...components].sort((a, b) => b.risk_score - a.risk_score)
 
   return (
-    <aside className="w-[260px] flex-shrink-0 flex flex-col border-r border-zinc-800 bg-zinc-950">
+    <aside
+      className="relative flex-shrink-0 flex flex-col border-r border-zinc-800 bg-zinc-950"
+      style={{ width }}
+    >
+      <div
+        onPointerDown={onHandlePointerDown}
+        onDoubleClick={onHandleDoubleClick}
+        className="absolute top-0 bottom-0 right-0 w-1 cursor-col-resize hover:bg-zinc-700"
+      />
       <div className="px-3 pt-3 pb-2 flex items-baseline gap-2">
-        <span className="text-[10px] uppercase tracking-wide text-zinc-500">Components</span>
-        <span className="text-[10px] tabular-nums text-zinc-600">{components.length}</span>
+        <span className="text-[10px] uppercase tracking-wide text-zinc-400">Components</span>
+        <span className="text-[10px] tabular-nums text-zinc-400">{components.length}</span>
       </div>
-      <div className="px-3 pb-2 text-[9px] uppercase text-zinc-600 border-b border-zinc-800">
+      <div className="px-3 pb-2 text-[10px] uppercase text-zinc-500 border-b border-zinc-800">
         TOPOLOGICAL RISK · TOP DECILE = CRITICAL
       </div>
 
@@ -39,18 +57,18 @@ export default function Sidebar({ components, selectedId, onSelect }: Props) {
               <div className="flex-1 min-w-0">
                 <div className="flex items-baseline gap-1.5">
                   <span
-                    className="text-[9px] uppercase tracking-wide flex-shrink-0"
+                    className="text-[10px] uppercase tracking-wide flex-shrink-0"
                     style={{ color: RISK_COLOR[c.risk_label as RiskLabel] }}
                   >
                     {c.risk_label}
                   </span>
-                  <span className="text-[12px] text-zinc-300 truncate">{c.name}</span>
+                  <span className="text-[12px] text-zinc-100 truncate">{c.name}</span>
                 </div>
-                <div className="text-[10px] text-zinc-500 truncate">
+                <div className="text-[10px] text-zinc-400 truncate">
                   {c.country} · T{c.tier} · {c.lead_time_days}d
                 </div>
               </div>
-              <div className="text-[11px] tabular-nums text-zinc-600 flex-shrink-0">
+              <div className="text-[11px] tabular-nums text-zinc-400 flex-shrink-0">
                 {c.risk_score.toFixed(4)}
               </div>
             </button>

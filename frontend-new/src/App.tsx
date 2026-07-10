@@ -16,6 +16,14 @@ import Sidebar from './components/Sidebar'
 import RiskStrip from './components/RiskStrip'
 import Graph from './components/Graph'
 import QAPanel from './components/QAPanel'
+import { useResizeHandle } from './useResizeHandle'
+
+const SIDEBAR_DEFAULT = 260
+const SIDEBAR_MIN = 200
+const SIDEBAR_MAX = 420
+const QA_DEFAULT = 340
+const QA_MIN = 280
+const QA_MAX = 560
 
 export default function App() {
   const [components, setComponents] = useState<Component[]>([])
@@ -24,6 +32,26 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [riskDetail, setRiskDetail] = useState<ComponentRiskDetail | null>(null)
   const [riskLoading, setRiskLoading] = useState(false)
+  const [highlightedIds, setHighlightedIds] = useState<Set<string>>(new Set())
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT)
+  const [qaWidth, setQaWidth] = useState(QA_DEFAULT)
+
+  const sidebarHandle = useResizeHandle({
+    width: sidebarWidth,
+    setWidth: setSidebarWidth,
+    min: SIDEBAR_MIN,
+    max: SIDEBAR_MAX,
+    defaultWidth: SIDEBAR_DEFAULT,
+    direction: 1, // handle on the right edge: dragging right grows it
+  })
+  const qaHandle = useResizeHandle({
+    width: qaWidth,
+    setWidth: setQaWidth,
+    min: QA_MIN,
+    max: QA_MAX,
+    defaultWidth: QA_DEFAULT,
+    direction: -1, // handle on the left edge: dragging right shrinks it
+  })
 
   // Load components, graph, and health in parallel on mount
   useEffect(() => {
@@ -45,6 +73,7 @@ export default function App() {
 
   const handleSelect = useCallback(async (id: string) => {
     setSelectedId(id)
+    setHighlightedIds(new Set())
     setRiskLoading(true)
     setRiskDetail(null)
     try {
@@ -60,14 +89,17 @@ export default function App() {
   const ds = health?.data_summary
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden bg-zinc-950 text-zinc-300">
+    <div className="flex flex-col h-screen overflow-hidden bg-zinc-950 text-zinc-100">
       {/* Main area */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar — 260px */}
+        {/* Sidebar — resizable, default 260px */}
         <Sidebar
           components={components}
           selectedId={selectedId}
           onSelect={handleSelect}
+          width={sidebarWidth}
+          onHandlePointerDown={sidebarHandle.handlePointerDown}
+          onHandleDoubleClick={sidebarHandle.handleDoubleClick}
         />
 
         {/* Center — flex-1 */}
@@ -80,43 +112,49 @@ export default function App() {
             components={mergedComponents}
             selectedId={selectedId}
             onSelect={handleSelect}
+            highlightedIds={highlightedIds}
           />
         </main>
 
-        {/* Q&A panel — 340px */}
+        {/* Q&A panel — resizable, default 340px */}
         <QAPanel
           selectedId={selectedId}
           components={components}
           riskDetail={riskDetail}
           onSelect={handleSelect}
+          highlightedIds={highlightedIds}
+          onMatch={setHighlightedIds}
+          width={qaWidth}
+          onHandlePointerDown={qaHandle.handlePointerDown}
+          onHandleDoubleClick={qaHandle.handleDoubleClick}
         />
       </div>
 
       {/* Footer */}
       <footer className="h-10 flex-shrink-0 border-t border-zinc-800 flex items-center px-4 gap-6">
         <div className="flex items-baseline gap-1.5">
-          <span className="text-[13px] tabular-nums text-zinc-300">
+          <span className="text-[13px] tabular-nums text-zinc-100">
             {ds?.components_count ?? '—'}
           </span>
-          <span className="text-[10px] uppercase text-zinc-500">Components</span>
+          <span className="text-[10px] uppercase text-zinc-400">Components</span>
         </div>
         <div className="flex items-baseline gap-1.5">
-          <span className="text-[13px] tabular-nums text-zinc-300">
+          <span className="text-[13px] tabular-nums text-zinc-100">
             {ds?.single_source_count ?? '—'}
           </span>
-          <span className="text-[10px] uppercase text-zinc-500">Single-Source</span>
+          <span className="text-[10px] uppercase text-zinc-400">Single-Source</span>
         </div>
         <div className="flex items-baseline gap-1.5">
-          <span className="text-[13px] tabular-nums text-zinc-300">
+          <span className="text-[13px] tabular-nums text-zinc-100">
             {ds?.export_controlled_count ?? '—'}
           </span>
-          <span className="text-[10px] uppercase text-zinc-500">Export Ctrl</span>
+          <span className="text-[10px] uppercase text-zinc-400">Export Ctrl</span>
         </div>
         <div className="flex items-baseline gap-1.5">
-          <span className="text-[13px] tabular-nums text-zinc-300">
+          <span className="text-[13px] tabular-nums text-zinc-100">
             {ds ? `${ds.median_lead_time}d` : '—'}
           </span>
-          <span className="text-[10px] uppercase text-zinc-500">Median Lead</span>
+          <span className="text-[10px] uppercase text-zinc-400">Median Lead</span>
         </div>
 
         <div className="flex-1" />
@@ -125,7 +163,7 @@ export default function App() {
         {health && (
           <span
             className={`text-[10px] tabular-nums ${
-              health.gpu_available ? 'text-zinc-600' : 'text-amber-600/70'
+              health.gpu_available ? 'text-zinc-400' : 'text-amber-600/70'
             }`}
           >
             {health.gpu || 'no gpu'}

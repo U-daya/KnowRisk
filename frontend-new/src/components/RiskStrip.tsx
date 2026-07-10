@@ -16,7 +16,7 @@ export default function RiskStrip({ detail, loading }: Props) {
   if (!detail && !loading) {
     return (
       <div className="flex items-center justify-center border-b border-zinc-800 px-4 py-8">
-        <span className="text-[10px] uppercase tracking-wide text-zinc-600">
+        <span className="text-[10px] uppercase tracking-wide text-zinc-500">
           SELECT A COMPONENT
         </span>
       </div>
@@ -27,10 +27,10 @@ export default function RiskStrip({ detail, loading }: Props) {
     return (
       <div className="flex border-b border-zinc-800 px-4 py-3">
         <div className="flex-1 pl-3" style={{ borderLeft: `2px solid ${BLOCKS[0].borderColor}` }}>
-          <div className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">
+          <div className="text-[10px] uppercase tracking-wide text-zinc-400 mb-1">
             Risk Factor
           </div>
-          <p className="text-[12px] leading-snug text-zinc-300">
+          <p className="text-[12px] leading-snug text-zinc-100">
             {detail?.llm_explanation.risk_factor ?? ''}
           </p>
         </div>
@@ -46,10 +46,10 @@ export default function RiskStrip({ detail, loading }: Props) {
           className="flex-1 pl-3"
           style={{ borderLeft: `2px solid ${block.borderColor}` }}
         >
-          <div className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">
+          <div className="text-[10px] uppercase tracking-wide text-zinc-400 mb-1">
             {block.label}
           </div>
-          <p className="text-[12px] leading-snug text-zinc-300">
+          <p className="text-[12px] leading-snug text-zinc-100">
             {loading ? '' : (detail?.llm_explanation[block.key] ?? '')}
           </p>
         </div>

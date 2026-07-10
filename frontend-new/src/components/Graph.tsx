@@ -8,7 +8,7 @@ import {
   Position,
   BackgroundVariant,
 } from '@xyflow/react'
-import type { Node, Edge, NodeProps } from '@xyflow/react'
+import type { Node, Edge, NodeProps, ReactFlowInstance } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 
 import { RISK_COLOR, type RiskLabel } from '../risk'
@@ -50,8 +50,8 @@ function ComponentNode({ data, selected }: NodeProps) {
           style={{ backgroundColor: RISK_COLOR[c.risk_label as RiskLabel] }}
         />
         <div className="min-w-0 flex-1">
-          <div className="text-[11px] text-zinc-300 truncate leading-none mb-0.5">{c.name}</div>
-          <div className="text-[9px] text-zinc-500 truncate">{c.country}</div>
+          <div className="text-[11px] text-zinc-100 truncate leading-none mb-0.5">{c.name}</div>
+          <div className="text-[10px] text-zinc-400 truncate">{c.country}</div>
         </div>
       </div>
       <Handle
@@ -149,9 +149,10 @@ interface Props {
   components: MergedComponent[]
   selectedId: string | null
   onSelect: (id: string) => void
+  highlightedIds: Set<string>
 }
 
-export default function Graph({ components, selectedId, onSelect }: Props) {
+export default function Graph({ components, selectedId, onSelect, highlightedIds }: Props) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
 
   const { baseNodes, baseEdges, adjacency } = useMemo(
@@ -165,25 +166,37 @@ export default function Graph({ components, selectedId, onSelect }: Props) {
     setNodes(baseNodes)
   }, [baseNodes, setNodes])
 
-  // Apply dimming when selection changes
+  // Apply dimming: selection wins over highlight; highlight wins over nothing
   useEffect(() => {
     if (baseNodes.length === 0) return
-    if (!selectedId) {
-      // No selection: reset all to full opacity
-      setNodes(baseNodes)
+
+    if (selectedId) {
+      const connected = adjacency.get(selectedId) ?? new Set<string>()
+      const relevant = new Set([selectedId, ...connected])
+      setNodes(
+        baseNodes.map((n) => ({
+          ...n,
+          selected: n.id === selectedId,
+          data: { ...n.data, dimmed: !relevant.has(n.id) },
+        })),
+      )
       return
     }
-    const connected = adjacency.get(selectedId) ?? new Set<string>()
-    const relevant = new Set([selectedId, ...connected])
 
-    setNodes(
-      baseNodes.map((n) => ({
-        ...n,
-        selected: n.id === selectedId,
-        data: { ...n.data, dimmed: !relevant.has(n.id) },
-      })),
-    )
-  }, [selectedId, baseNodes, adjacency, setNodes])
+    if (highlightedIds.size > 0) {
+      setNodes(
+        baseNodes.map((n) => ({
+          ...n,
+          selected: false,
+          data: { ...n.data, dimmed: !highlightedIds.has(n.id) },
+        })),
+      )
+      return
+    }
+
+    // Nothing selected, nothing highlighted: full reset
+    setNodes(baseNodes)
+  }, [selectedId, highlightedIds, baseNodes, adjacency, setNodes])
 
   // Only edges touching the selected node are ever rendered. They fade in on
   // selection and fade out on deselect, so a just-hidden edge stays mounted
@@ -236,14 +249,43 @@ export default function Graph({ components, selectedId, onSelect }: Props) {
     [onSelect],
   )
 
+  // Re-fit whenever the graph's own container is resized (e.g. a side panel
+  // being dragged), debounced so a drag doesn't spam fitView on every pixel.
+  const wrapperRef = useRef<HTMLDivElement>(null)
+  const rfInstance = useRef<ReactFlowInstance | null>(null)
+  const resizeSettleTimer = useRef<ReturnType<typeof setTimeout>>()
+
+  useEffect(() => {
+    const el = wrapperRef.current
+    if (!el) return
+    const observer = new ResizeObserver(() => {
+      if (resizeSettleTimer.current) clearTimeout(resizeSettleTimer.current)
+      resizeSettleTimer.current = setTimeout(() => {
+        rfInstance.current?.fitView({ padding: 0.1 })
+      }, 150)
+    })
+    observer.observe(el)
+    return () => {
+      observer.disconnect()
+      if (resizeSettleTimer.current) clearTimeout(resizeSettleTimer.current)
+    }
+  }, [])
+
   return (
-    <div className="flex-1 h-full w-full" style={{ minHeight: '40vh', background: '#09090b' }}>
+    <div
+      ref={wrapperRef}
+      className="flex-1 h-full w-full"
+      style={{ minHeight: '40vh', background: '#09090b' }}
+    >
       <ReactFlow
         nodes={nodes}
         edges={edges}
         onNodesChange={onNodesChange}
         nodeTypes={nodeTypes}
         onNodeClick={handleNodeClick}
+        onInit={(instance) => {
+          rfInstance.current = instance
+        }}
         fitView
         fitViewOptions={{ padding: 0.1 }}
         minZoom={0.15}

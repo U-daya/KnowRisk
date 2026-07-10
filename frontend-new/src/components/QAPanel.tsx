@@ -2,6 +2,7 @@ import { useMemo, useState, useRef, useEffect } from 'react'
 import { submitQuery } from '../api'
 import type { Component, ComponentRiskDetail, QueryResponse } from '../api'
 import { RISK_COLOR, type RiskLabel } from '../risk'
+import { matchComponents } from '../match'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -25,7 +26,7 @@ function SourceLine({ response }: { response: QueryResponse }) {
 
   if (source === 'cache') {
     return (
-      <div className="text-[10px] uppercase tracking-wide text-zinc-600 mb-1">
+      <div className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">
         CACHE
       </div>
     )
@@ -38,7 +39,7 @@ function SourceLine({ response }: { response: QueryResponse }) {
     ) : null
 
   return (
-    <div className="text-[10px] uppercase tracking-wide text-zinc-600 mb-1">
+    <div className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">
       MI300X · <span className="tabular-nums">{latency_ms.toFixed(0)}ms</span>
       {noNews}
     </div>
@@ -52,9 +53,24 @@ interface Props {
   components: Component[]
   riskDetail: ComponentRiskDetail | null
   onSelect: (id: string) => void
+  highlightedIds: Set<string>
+  onMatch: (ids: Set<string>) => void
+  width: number
+  onHandlePointerDown: (e: React.PointerEvent) => void
+  onHandleDoubleClick: () => void
 }
 
-export default function QAPanel({ selectedId, components, riskDetail, onSelect }: Props) {
+export default function QAPanel({
+  selectedId,
+  components,
+  riskDetail,
+  onSelect,
+  highlightedIds,
+  onMatch,
+  width,
+  onHandlePointerDown,
+  onHandleDoubleClick,
+}: Props) {
   const [turns, setTurns] = useState<Turn[]>([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
@@ -80,6 +96,8 @@ export default function QAPanel({ selectedId, components, riskDetail, onSelect }
     e.preventDefault()
     const query = input.trim()
     if (!query || busy) return
+
+    onMatch(matchComponents(query, components))
 
     setInput('')
     setBusy(true)
@@ -110,26 +128,34 @@ export default function QAPanel({ selectedId, components, riskDetail, onSelect }
   }
 
   return (
-    <aside className="w-[340px] flex-shrink-0 flex flex-col border-l border-zinc-800 bg-zinc-950">
+    <aside
+      className="relative flex-shrink-0 flex flex-col border-l border-zinc-800 bg-zinc-950"
+      style={{ width }}
+    >
+      <div
+        onPointerDown={onHandlePointerDown}
+        onDoubleClick={onHandleDoubleClick}
+        className="absolute top-0 bottom-0 left-0 w-1 cursor-col-resize hover:bg-zinc-700"
+      />
       {/* Header */}
       <div className="px-3 pt-3 pb-2 border-b border-zinc-800 flex items-baseline gap-2">
-        <span className="text-[10px] uppercase tracking-wide text-zinc-500">Q&amp;A</span>
+        <span className="text-[10px] uppercase tracking-wide text-zinc-400">Q&amp;A</span>
         {selectedId && (
-          <span className="text-[10px] text-zinc-600 tabular-nums">{selectedId}</span>
+          <span className="text-[10px] text-zinc-400 tabular-nums">{selectedId}</span>
         )}
       </div>
 
       {/* Turn stream */}
       <div className="flex-1 overflow-y-auto px-3 py-3 space-y-4">
         {turns.length === 0 && (
-          <p className="text-[10px] uppercase tracking-wide text-zinc-600">
+          <p className="text-[10px] uppercase tracking-wide text-zinc-500">
             {selectedId ? `${selectedId} selected` : 'No component selected'}
           </p>
         )}
 
         {selectedId && riskDetail && (
-          <div>
-            <div className="text-[9px] uppercase tracking-wide text-zinc-600 border-b border-zinc-800 pb-1 mb-2">
+          <div className="pr-3">
+            <div className="text-[10px] uppercase tracking-wide text-zinc-500 border-b border-zinc-800 pb-1 mb-2">
               Dependencies
             </div>
             {sortedDeps.map((dep) => (
@@ -142,16 +168,16 @@ export default function QAPanel({ selectedId, components, riskDetail, onSelect }
                   className="w-2 h-2 rounded-full flex-shrink-0"
                   style={{ backgroundColor: RISK_COLOR[labelById.get(dep.id) ?? 'LOW'] }}
                 />
-                <span className="text-[11px] text-zinc-400 truncate flex-1 min-w-0">
+                <span className="text-[11px] text-zinc-100 truncate flex-1 min-w-0">
                   {dep.name}
                 </span>
-                <span className="text-[9px] text-zinc-600 flex-shrink-0">{dep.country}</span>
+                <span className="text-[10px] text-zinc-400 flex-shrink-0">{dep.country}</span>
                 {dep.single_source && (
-                  <span className="text-[8px] uppercase text-amber-600/70 flex-shrink-0">
+                  <span className="text-[10px] uppercase text-amber-600/70 flex-shrink-0">
                     SINGLE-SOURCE
                   </span>
                 )}
-                <span className="text-[10px] tabular-nums text-zinc-600 flex-shrink-0 text-right">
+                <span className="text-[10px] tabular-nums text-zinc-400 flex-shrink-0 min-w-[6ch] text-right">
                   {dep.risk_score.toFixed(4)}
                 </span>
               </button>
@@ -173,7 +199,7 @@ export default function QAPanel({ selectedId, components, riskDetail, onSelect }
 
           if (turn.role === 'pending') {
             return (
-              <div key={i} className="text-[13px] text-zinc-600">
+              <div key={i} className="text-[13px] text-zinc-500">
                 …
               </div>
             )
@@ -192,10 +218,17 @@ export default function QAPanel({ selectedId, components, riskDetail, onSelect }
         <div ref={bottomRef} />
       </div>
 
+      {/* Filter hint */}
+      <div className="px-3 py-1.5 border-t border-zinc-800 text-[10px] uppercase text-zinc-500">
+        {highlightedIds.size > 0
+          ? `MATCHED ${highlightedIds.size} COMPONENTS`
+          : 'FILTER: COUNTRY · COMPONENT · SINGLE-SOURCE · CRITICAL'}
+      </div>
+
       {/* Input */}
       <form
         onSubmit={handleSubmit}
-        className="border-t border-zinc-800 flex gap-0"
+        className="flex gap-0"
       >
         <input
           type="text"
@@ -203,7 +236,7 @@ export default function QAPanel({ selectedId, components, riskDetail, onSelect }
           onChange={(e) => setInput(e.target.value)}
           placeholder="Ask about supply-chain risk…"
           disabled={busy}
-          className="flex-1 bg-zinc-900 border-0 px-3 py-2.5 text-[13px] text-zinc-300 placeholder:text-zinc-600 focus:outline-none disabled:opacity-50"
+          className="flex-1 bg-zinc-900 border-0 px-3 py-2.5 text-[13px] text-zinc-100 placeholder:text-zinc-500 focus:outline-none disabled:opacity-50"
         />
         <button
           type="submit"
