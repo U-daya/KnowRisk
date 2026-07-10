@@ -1,6 +1,7 @@
-import { useState, useRef, useEffect } from 'react'
+import { useMemo, useState, useRef, useEffect } from 'react'
 import { submitQuery } from '../api'
-import type { QueryResponse } from '../api'
+import type { Component, ComponentRiskDetail, QueryResponse } from '../api'
+import { RISK_COLOR, type RiskLabel } from '../risk'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -48,13 +49,27 @@ function SourceLine({ response }: { response: QueryResponse }) {
 
 interface Props {
   selectedId: string | null
+  components: Component[]
+  riskDetail: ComponentRiskDetail | null
+  onSelect: (id: string) => void
 }
 
-export default function QAPanel({ selectedId }: Props) {
+export default function QAPanel({ selectedId, components, riskDetail, onSelect }: Props) {
   const [turns, setTurns] = useState<Turn[]>([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
+
+  // Lookup for the risk band of any component by id, for dependency-row dots
+  const labelById = useMemo(
+    () => new Map(components.map((c) => [c.id, c.risk_label as RiskLabel])),
+    [components],
+  )
+
+  const sortedDeps = useMemo(
+    () => [...(riskDetail?.dependency_risks ?? [])].sort((a, b) => b.risk_score - a.risk_score),
+    [riskDetail],
+  )
 
   // Scroll to bottom on new turns
   useEffect(() => {
@@ -110,6 +125,38 @@ export default function QAPanel({ selectedId }: Props) {
           <p className="text-[10px] uppercase tracking-wide text-zinc-600">
             {selectedId ? `${selectedId} selected` : 'No component selected'}
           </p>
+        )}
+
+        {selectedId && riskDetail && (
+          <div>
+            <div className="text-[9px] uppercase tracking-wide text-zinc-600 border-b border-zinc-800 pb-1 mb-2">
+              Dependencies
+            </div>
+            {sortedDeps.map((dep) => (
+              <button
+                key={dep.id}
+                onClick={() => onSelect(dep.id)}
+                className="w-full flex items-center gap-1.5 py-1 text-left hover:bg-zinc-900 transition-colors duration-100"
+              >
+                <span
+                  className="w-2 h-2 rounded-full flex-shrink-0"
+                  style={{ backgroundColor: RISK_COLOR[labelById.get(dep.id) ?? 'LOW'] }}
+                />
+                <span className="text-[11px] text-zinc-400 truncate flex-1 min-w-0">
+                  {dep.name}
+                </span>
+                <span className="text-[9px] text-zinc-600 flex-shrink-0">{dep.country}</span>
+                {dep.single_source && (
+                  <span className="text-[8px] uppercase text-amber-600/70 flex-shrink-0">
+                    SINGLE-SOURCE
+                  </span>
+                )}
+                <span className="text-[10px] tabular-nums text-zinc-600 flex-shrink-0 text-right">
+                  {dep.risk_score.toFixed(4)}
+                </span>
+              </button>
+            ))}
+          </div>
         )}
 
         {turns.map((turn, i) => {

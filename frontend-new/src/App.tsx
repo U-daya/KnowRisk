@@ -84,7 +84,12 @@ export default function App() {
         </main>
 
         {/* Q&A panel — 340px */}
-        <QAPanel selectedId={selectedId} />
+        <QAPanel
+          selectedId={selectedId}
+          components={components}
+          riskDetail={riskDetail}
+          onSelect={handleSelect}
+        />
       </div>
 
       {/* Footer */}
