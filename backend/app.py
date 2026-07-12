@@ -22,7 +22,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from llm_agent import agent as llm_agent
 
-METRICS_PATH  = REPO_ROOT / "classifier" / "metrics.json"
+METRICS_PATH   = REPO_ROOT / "data" / "classifier" / "metrics.json"
 SUPPLIERS_PATH = REPO_ROOT / "data" / "suppliers.json"
 DIST = REPO_ROOT / "frontend-new" / "dist"
 
@@ -33,31 +33,32 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# CORS configuration
 env_mode = os.environ.get("KNOWRISK_ENV", "production")
-if env_mode == "development":
-    allow_origins = ["http://localhost:5173"]
-else:
-    allow_origins = []
-
-print(f"CORS mode: {env_mode}")
+# Allow all origins so the React SPA works from the Render public URL.
+# In production the SPA is same-origin, but '*' is safe and avoids
+# browser pre-flight failures during demos.
+allow_origins = ["*"]
+print(f"CORS mode: {env_mode} (allow_origins=*)")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allow_origins,
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
+if (DIST / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
 
 @app.on_event("startup")
 def startup_event():
     print("🚀 Starting KnowRisk application...")
-    # Eagerly warm up and load local models
-    llm_agent.init_models()
-    print("✅ KnowRisk application started successfully.")
+    try:
+        llm_agent.init_models()
+        print("✅ KnowRisk application started successfully.")
+    except Exception as e:
+        print(f"⚠️  init_models() failed — running in synthetic mode: {e}")
 
 # ── Request/Response models ────────────────────────────────────────────────
 

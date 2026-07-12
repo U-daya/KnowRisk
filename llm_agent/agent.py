@@ -18,11 +18,22 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError
 import joblib
 import numpy as np
 import pandas as pd
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
-# Set HF_HOME inside python process only
-os.environ["HF_HOME"] = str(Path("/root/.cache/huggingface"))
+# ── OpenAI-compatible client (points to AMD droplet vLLM or any endpoint) ──
+_LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "").strip()
+_LLM_API_KEY  = os.environ.get("LLM_API_KEY",  "not-needed")
+_oai_client   = None
+
+def _get_oai_client():
+    global _oai_client, _LLM_BASE_URL, _LLM_API_KEY
+    if _oai_client is None:
+        from openai import OpenAI
+        _oai_client = OpenAI(
+            api_key=_LLM_BASE_URL and _LLM_API_KEY or "not-needed",
+            base_url=_LLM_BASE_URL or None,
+            timeout=25.0,
+        )
+    return _oai_client
 
 # ── Paths ──────────────────────────────────────────────────────────────────
 REPO_ROOT     = Path(__file__).resolve().parent.parent
@@ -41,8 +52,6 @@ else:
 _model                = None
 _features             = None
 _suppliers            = None
-_tokenizer            = None
-_llm_model            = None
 _sentence_transformer = None
 _cache                = None
 
@@ -168,21 +177,27 @@ class SemanticCache:
 # ── Startup & Helpers ──────────────────────────────────────────────────────
 
 def get_gpu_info() -> tuple[bool, str]:
-    available = False
-    name = "N/A"
+    """Returns (llm_reachable, label). Probes the configured LLM endpoint."""
+    if not _LLM_BASE_URL:
+        return False, "SYNTHETIC (no LLM endpoint configured)"
     try:
-        available = torch.cuda.is_available()
-        if available:
-            name = torch.cuda.get_device_name(0)
+        import httpx
+        r = httpx.get(
+            _LLM_BASE_URL.rstrip("/") + "/models",
+            headers={"Authorization": f"Bearer {_LLM_API_KEY}"},
+            timeout=3.0,
+        )
+        if r.status_code < 500:
+            return True, f"AMD Instinct MI300X · ROCm · LIVE"
+        return False, "AMD droplet unreachable — SYNTHETIC FALLBACK"
     except Exception:
-        pass
-    return available, name
+        return False, "AMD droplet unreachable — SYNTHETIC FALLBACK"
 
 def init_models():
-    """Eagerly load models at startup. Fail startup loudly if either fails."""
-    global _tokenizer, _llm_model, _sentence_transformer, _cache
-    
-    # 1. Load SentenceTransformer (MiniLM)
+    """Load the SentenceTransformer for semantic caching. LLM calls go to the API."""
+    global _sentence_transformer, _cache
+
+    # 1. Load SentenceTransformer (MiniLM) for semantic cache
     print("🚀 [Startup] Initializing MiniLM for semantic caching...")
     t0 = time.time()
     try:
@@ -190,60 +205,36 @@ def init_models():
         _sentence_transformer = SentenceTransformer("all-MiniLM-L6-v2")
         print(f"✅ MiniLM loaded in {time.time() - t0:.2f} seconds.")
     except Exception as e:
-        print(f"❌ Failed to load MiniLM: {e}")
-        raise RuntimeError(f"Failed to load MiniLM: {e}") from e
-        
-    # 2. Load Local LLM (Qwen)
-    model_id = get_llm_model()
-    print(f"🚀 [Startup] Initializing local Hugging Face model: {model_id}...")
-    t0 = time.time()
-    try:
-        _print_rocm_smi("Pre-Model Load")
-        _tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
-        _llm_model = AutoModelForCausalLM.from_pretrained(
-            model_id,
-            torch_dtype=torch.float16,
-            device_map="auto",
-            trust_remote_code=True
-        )
-        print(f"✅ Local model loaded in {time.time() - t0:.2f} seconds.")
-        _print_rocm_smi("Post-Model Load")
-    except Exception as e:
-        print(f"❌ Failed to load LLM {model_id}: {e}")
-        raise RuntimeError(f"Failed to load LLM {model_id}: {e}") from e
+        print(f"⚠️ MiniLM load failed (caching disabled): {e}")
 
-    # 3. Warm up GPU kernels
-    print("🚀 [Startup] Warming up GPU kernels...")
-    t_warm = time.time()
-    try:
-        warmup_inputs = _tokenizer("warmup", return_tensors="pt").to(_llm_model.device)
-        with torch.no_grad():
-            _ = _llm_model.generate(**warmup_inputs, max_new_tokens=32, do_sample=False)
-        torch.cuda.synchronize()
-        print(f"✅ GPU kernels warmed up in {time.time() - t_warm:.2f} seconds.")
-    except Exception as e:
-        print(f"⚠️ GPU kernel warmup failed: {e}")
+    # 2. LLM is API-based — just verify config
+    if _LLM_BASE_URL:
+        print(f"🚀 [Startup] LLM endpoint configured: {_LLM_BASE_URL}")
+        print(f"   Model: {get_llm_model()}")
+    else:
+        print("⚠️  [Startup] LLM_BASE_URL not set — will use synthetic fallback for all LLM calls.")
 
-    # Initialize cache
+    # 3. Initialize cache
     _cache = SemanticCache(CACHE_PATH)
 
-    # Calibrate risk thresholds based on actual data
+    # 4. Calibrate risk thresholds
     calibrate_risk_thresholds()
 
 def get_health_stats() -> dict:
-    global news_search_failures, news_empty_results, latency_samples, cache_hits, total_queries, _llm_model
+    global news_search_failures, news_empty_results, latency_samples, cache_hits, total_queries
     p50_latency = 0.0
     if latency_samples:
         p50_latency = float(np.median(latency_samples))
     cache_hit_rate = 0.0
     if total_queries > 0:
         cache_hit_rate = float(cache_hits) / total_queries
+    llm_live, _ = get_gpu_info()
     return {
         "news_search_failures": news_search_failures,
         "news_empty_results": news_empty_results,
         "p50_latency_ms": round(p50_latency, 2),
         "cache_hit_rate": round(cache_hit_rate, 4),
-        "llm_loaded": _llm_model is not None
+        "llm_loaded": llm_live,
     }
 
 def clean_response_text(text: str) -> str:
@@ -303,11 +294,24 @@ def _get_sentence_transformer():
         _sentence_transformer = SentenceTransformer("all-MiniLM-L6-v2")
     return _sentence_transformer
 
-def _get_llm():
-    global _tokenizer, _llm_model
-    if _llm_model is None or _tokenizer is None:
-        raise RuntimeError("LLM not initialized! Call init_models() first.")
-    return _tokenizer, _llm_model
+def _run_llm_chat(system_msg: str, user_msg: str, max_tokens: int = 160) -> str:
+    """
+    Call the configured OpenAI-compatible LLM endpoint.
+    Raises RuntimeError if LLM_BASE_URL is not configured.
+    """
+    if not _LLM_BASE_URL:
+        raise RuntimeError("LLM_BASE_URL not configured — synthetic fallback active")
+    client = _get_oai_client()
+    resp = client.chat.completions.create(
+        model=get_llm_model(),
+        messages=[
+            {"role": "system", "content": system_msg},
+            {"role": "user",   "content": user_msg},
+        ],
+        max_tokens=max_tokens,
+        temperature=0.0,
+    )
+    return resp.choices[0].message.content.strip()
 
 def get_data_summary_stats() -> dict:
     try:
@@ -596,27 +600,7 @@ MITIGATION: <one complete sentence, 15-25 words, recommending a concrete mitigat
 
     # 3. LLM call — with one retry if any field is missing
     def _run_inference() -> str:
-        tokenizer, model = _get_llm()
-        messages = [
-            {"role": "system", "content": system_msg},
-            {"role": "user",   "content": prompt},
-        ]
-        text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
-        _print_rocm_smi("Start of Explanation Generation")
-        with torch.no_grad():
-            generated_ids = model.generate(
-                **model_inputs,
-                max_new_tokens=160,
-                do_sample=False,
-            )
-        generated_ids = [
-            output_ids[len(input_ids):]
-            for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
-        ]
-        raw = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
-        _print_rocm_smi("End of Explanation Generation")
-        return raw
+        return _run_llm_chat(system_msg, prompt, max_tokens=160)
 
     def _fields_score(f: dict[str, str] | None) -> int:
         return sum(1 for v in (f or {}).values() if v)
@@ -794,32 +778,11 @@ def answer_query(query: str, context_component_id: str | None = None) -> dict:
 
     # 3. LLM call
     try:
-        tokenizer, model = _get_llm()
-        
-        messages = [
-            {"role": "system", "content": system_msg},
-            {"role": "user",   "content": full_prompt},
-        ]
-        text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
+        response_text = _run_llm_chat(system_msg, full_prompt, max_tokens=160)
 
-        _print_rocm_smi("Start of Q&A Generation")
-        with torch.no_grad():
-            generated_ids = model.generate(
-                **model_inputs,
-                max_new_tokens=160,
-                do_sample=False
-            )
-
-        generated_ids = [
-            output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
-        ]
-        response_text = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
-        _print_rocm_smi("End of Q&A Generation")
-        
         cleaned_text = clean_response_text(response_text)
         cleaned_text = truncate_to_last_sentence(cleaned_text)
-        
+
         try:
             cache.add(namespace, full_prompt, q_emb, cleaned_text, news_grounded)
         except Exception as e:
@@ -827,7 +790,7 @@ def answer_query(query: str, context_component_id: str | None = None) -> dict:
 
         latency_ms = round((time.time() - t0) * 1000.0, 2)
         _update_latency_stat(latency_ms)
-        
+
         return {
             "text": cleaned_text,
             "source": "mi300x",

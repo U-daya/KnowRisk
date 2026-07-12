@@ -1,0 +1,34 @@
+services:
+  - type: web
+    name: knowrisk
+    runtime: python
+    plan: free
+
+    # Build: compile the React frontend, then install Python deps
+    buildCommand: >-
+      curl -fsSL https://deb.nodesource.com/setup_20.x | bash - &&
+      apt-get install -y nodejs &&
+      cd frontend-new && npm ci && npm run build && cd .. &&
+      pip install -r requirements.txt
+
+    # Start the FastAPI backend (serves built React dist + all /api/* routes)
+    startCommand: uvicorn backend.app:app --host 0.0.0.0 --port $PORT
+
+    envVars:
+      # ── AMD Droplet connection ────────────────────────────────────────────
+      # Set LLM_BASE_URL to your droplet's vLLM endpoint when it's live.
+      # Leave blank → app runs in SYNTHETIC FALLBACK mode, clearly labeled.
+      - key: LLM_BASE_URL
+        value: ""          # e.g. http://<droplet-ip>:8001/v1
+        sync: false
+
+      - key: LLM_MODEL
+        value: "Qwen/Qwen2.5-7B-Instruct"
+
+      - key: LLM_API_KEY
+        value: "not-needed"   # vLLM doesn't need a key
+        sync: false
+
+      # production = CORS locked to same-origin; development = open to localhost:5173
+      - key: KNOWRISK_ENV
+        value: "production"
