@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: knowrisk
+    runtime: python
+    plan: free
+
+    # Install dependencies
+    buildCommand: pip install -r requirements.txt
+
+    # Start the unified server
+    startCommand: uvicorn serve:app --host 0.0.0.0 --port $PORT
+
+    envVars:
+      # ── AMD Droplet connection (set these in Render dashboard when droplet is live) ──
+      # Leave LLM_BASE_URL blank → app runs in synthetic fallback mode automatically
+      - key: LLM_BASE_URL
+        value: ""            # e.g. http://<your-droplet-ip>:8001/v1
+        sync: false
+
+      - key: LLM_MODEL
+        value: "Qwen/Qwen2.5-7B-Instruct"
+
+      - key: LLM_API_KEY
+        value: "not-needed"  # vLLM typically doesn't require a key
+        sync: false
+
+      - key: LLM_GPU_LABEL
+        value: "AMD Instinct MI300X · ROCm"

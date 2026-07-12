@@ -74,6 +74,20 @@
       z-index: 100;
     }
     #demo-banner.visible { display: block; }
+    /* ─── Synthetic-mode banner (backend reachable, but no AMD droplet) ── */
+    #synth-banner {
+      display: none;
+      background: linear-gradient(90deg, #92400e, #b45309);
+      color: #fef3c7;
+      text-align: center;
+      padding: 7px 16px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      position: relative;
+      z-index: 100;
+    }
+    #synth-banner.visible { display: block; }
 
     /* ─── Top Nav ───────────────────────────────────────────────── */
     .topnav {
@@ -720,6 +734,10 @@
 </div>
 
 <!-- Top navigation -->
+<!-- Shown only when backend is completely unreachable (ngrok-style demo) -->
+<div id="demo-banner">📦 DEMO MODE — backend unreachable, showing bundled data</div>
+<!-- Shown when backend is live but AMD droplet is offline -->
+<div id="synth-banner">⚠️ SYNTHETIC FALLBACK — AMD MI300X droplet offline. Risk scores are model-generated; LLM explanations are rule-based. Connect the droplet to enable live GPU inference.</div>
 <nav class="topnav">
   <div class="nav-logo">
     <div class="nav-logo-icon">⚡</div>
@@ -729,9 +747,9 @@
     </div>
   </div>
   <div class="nav-pills">
-    <div class="nav-pill amd">
-      <span class="dot"></span>
-      AMD MI300X · ROCm
+    <div class="nav-pill amd" id="amd-pill">
+      <span class="dot" id="amd-dot"></span>
+      <span id="amd-pill-label">Checking AMD…</span>
     </div>
     <div class="nav-pill" id="model-pill">Loading model…</div>
     <div class="nav-pill" id="data-source-pill">Checking data…</div>
@@ -847,7 +865,7 @@
       <!-- LLM Explanation -->
       <div class="card llm-card">
         <div class="card-title">🤖 AI Risk Analysis</div>
-        <div class="llm-chip"><span class="dot"></span> <span id="llm-model-label">Local LLM · AMD ROCm</span></div>
+        <div class="llm-chip"><span class="dot"></span> <span id="llm-model-label">AMD MI300X · AMD ROCm</span></div>
         <div class="llm-text" id="llm-text">
           <span style="color:var(--text-muted)">Select a component to generate an AI-powered risk assessment.</span>
         </div>
@@ -1141,7 +1159,7 @@ function renderRisk(d) {
   `).join('');
 
   // LLM explanation
-  document.getElementById('llm-model-label').textContent = `${d.model_id || 'Local LLM'} · AMD ROCm`;
+  document.getElementById('llm-model-label').textContent = `${d.model_id || 'AMD MI300X'} · AMD ROCm`;
   document.getElementById('llm-text').innerHTML = d.llm_explanation
     ? d.llm_explanation.replace(/\n/g, '<br>')
     : '<span style="color:var(--text-muted)">No explanation available.</span>';
@@ -1198,8 +1216,42 @@ function renderDemoRisk(id) {
   renderRisk(fakeData);
 }
 
-// ── Load classifier metrics ──────────────────────────────────
+// ── Load classifier metrics + health ─────────────────────────
 async function loadMetrics() {
+  // ── Health / GPU status ───────────────────────────────────
+  try {
+    const health = await fetch(`${API}/api/health`).then(r => r.json());
+    const live = health.gpu_available === true;
+
+    if (live) {
+      // AMD droplet is reachable → show green live pill
+      const modelShort = (health.llm_model || 'Qwen').split('/').pop();
+      document.getElementById('amd-pill').style.background = 'rgba(34,197,94,0.12)';
+      document.getElementById('amd-pill').style.borderColor = 'rgba(34,197,94,0.4)';
+      document.getElementById('amd-pill').style.color = '#22C55E';
+      document.getElementById('amd-pill-label').textContent = `AMD MI300X · LIVE · ${modelShort}`;
+      document.getElementById('model-pill').textContent = `🧠 ${modelShort}`;
+      document.getElementById('llm-model-label').textContent =
+        `${health.llm_model} · AMD ROCm · LIVE`;
+    } else {
+      // Backend up but no droplet → show synthetic banner + orange pill
+      document.getElementById('synth-banner').classList.add('visible');
+      document.getElementById('amd-pill').style.background = 'rgba(251,191,36,0.10)';
+      document.getElementById('amd-pill').style.borderColor = 'rgba(251,191,36,0.35)';
+      document.getElementById('amd-pill').style.color = '#FBBF24';
+      document.getElementById('amd-pill-label').textContent = 'AMD MI300X · OFFLINE';
+      document.getElementById('amd-dot').style.animation = 'none';
+      document.getElementById('amd-dot').style.opacity = '0.4';
+      document.getElementById('model-pill').textContent = '⚠️ Synthetic fallback';
+      document.getElementById('llm-model-label').textContent = 'Synthetic — AMD droplet offline';
+    }
+  } catch (e) {
+    // Backend unreachable → demoMode already set by loadComponents
+    document.getElementById('model-pill').textContent = '⚡ AMD MI300X';
+    document.getElementById('amd-pill-label').textContent = 'AMD MI300X · ROCm';
+  }
+
+  // ── Classifier metrics (optional) ─────────────────────────
   try {
     const res = await fetch(`${API}/api/model-metrics`);
     if (!res.ok) throw new Error();
@@ -1212,19 +1264,9 @@ async function loadMetrics() {
     document.getElementById('m-samples').textContent  = (m.n_samples_total / 1000).toFixed(0) + 'K';
     document.getElementById('m-source').textContent   =
       `Data source: ${m.data_source} · ${m.n_features} features · CV AUC: ${m.cv_roc_auc_mean} ± ${m.cv_roc_auc_std}`;
-
     document.getElementById('data-source-pill').textContent =
-      m.data_source === 'real_dataco' ? '✅ Real DataCo dataset' : '⚠ Synthetic fallback';
-
-    // Update model pill
-    const health = await fetch(`${API}/api/health`).then(r=>r.json()).catch(()=>({}));
-    document.getElementById('model-pill').textContent =
-      health.llm_model ? `🧠 ${health.llm_model.split('/').pop()}` : '🧠 LLM offline';
-    document.getElementById('llm-model-label').textContent =
-      `${health.llm_model || 'Local LLM'} · AMD ROCm`;
-
+      m.data_source === 'real_dataco' ? '✅ Real DataCo dataset' : '📊 Synthetic data';
   } catch (e) {
-    document.getElementById('model-pill').textContent = '🧠 Demo mode';
     document.getElementById('data-source-pill').textContent = '📦 Bundled data';
   }
 }
