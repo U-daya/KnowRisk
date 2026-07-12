@@ -92,13 +92,13 @@ export interface GraphData {
 export type MergedComponent = Component & { dependencies: string[] };
 
 // In dev, Vite serves the frontend on :5173 and the API lives on :8000, so we
-// need an absolute origin. In production the API is served from the same
-// origin/path as the built frontend (see vite.config.ts `base: './'`), so we
-// derive a relative base from BASE_URL instead of hardcoding '' (which
-// resolved to the domain root and broke under reverse-proxy path prefixes).
+// need an absolute origin. In production the frontend and backend are deployed
+// separately (frontend on Vercel, backend on Render), so the API origin is
+// baked in at build time via VITE_API_URL. Falls back to same-origin relative
+// path if VITE_API_URL isn't set, for the monolith Render-only deployment path.
 const API_BASE = import.meta.env.DEV
   ? 'http://localhost:8000'
-  : import.meta.env.BASE_URL.replace(/\/$/, '');
+  : (import.meta.env.VITE_API_URL?.replace(/\/$/, '') ?? import.meta.env.BASE_URL.replace(/\/$/, ''));
 
 export async function fetchComponents(): Promise<Component[]> {
   const response = await fetch(`${API_BASE}/api/components`);
