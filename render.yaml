@@ -4,14 +4,10 @@ services:
     runtime: python
     plan: free
 
-    # Build: compile the React frontend, then install Python deps
-    buildCommand: >-
-      curl -fsSL https://deb.nodesource.com/setup_20.x | bash - &&
-      apt-get install -y nodejs &&
-      cd frontend-new && npm ci && npm run build && cd .. &&
-      pip install -r requirements.txt
+    # Backend only — the React frontend is built and hosted separately on Vercel.
+    buildCommand: pip install -r requirements.txt
 
-    # Start the FastAPI backend (serves built React dist + all /api/* routes)
+    # Start the FastAPI backend (serves all /api/* routes)
     startCommand: uvicorn backend.app:app --host 0.0.0.0 --port $PORT
 
     envVars:
