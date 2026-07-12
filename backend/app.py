@@ -155,10 +155,21 @@ async def get_graph():
 
 @app.get("/{full_path:path}")
 async def spa(full_path: str):
-    """Serve the built SPA for any non-API route (client-side routing)."""
+    """
+    Serve the built SPA for any non-API route, if a frontend build is present
+    (legacy same-origin deploy). Otherwise this is a backend-only deployment —
+    the frontend is hosted separately on Vercel — so return a helpful message
+    instead of crashing on a missing dist/index.html.
+    """
     if full_path.startswith("api"):
         raise HTTPException(404, detail="Not found")
-    return FileResponse(DIST / "index.html")
+    index_path = DIST / "index.html"
+    if index_path.exists():
+        return FileResponse(index_path)
+    return {
+        "status": "ok",
+        "message": "KnowRisk backend is running. The frontend is hosted separately — see the Vercel deployment.",
+    }
 
 
 if __name__ == "__main__":
