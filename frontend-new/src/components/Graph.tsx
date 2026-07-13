@@ -72,6 +72,8 @@ interface GraphAssets {
   baseEdges: Edge[]
   /** adjacency: componentId → set of all directly connected ids */
   adjacency: Map<string, Set<string>>
+  /** depMap: componentId → its direct dependency ids (upstream suppliers only) */
+  depMap: Map<string, string[]>
 }
 
 function buildGraph(components: MergedComponent[]): GraphAssets {
@@ -140,7 +142,14 @@ function buildGraph(components: MergedComponent[]): GraphAssets {
     }
   }
 
-  return { baseNodes, baseEdges, adjacency }
+  // Upstream-only dependency map (each node → the parts it depends on), used to
+  // trace the multi-hop supply chain the same way the globe does.
+  const depMap = new Map<string, string[]>()
+  for (const c of uniq) {
+    depMap.set(c.id, (c.dependencies ?? []).filter((id) => idSet.has(id)))
+  }
+
+  return { baseNodes, baseEdges, adjacency, depMap }
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -155,10 +164,34 @@ interface Props {
 export default function Graph({ components, selectedId, onSelect, highlightedIds }: Props) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
 
-  const { baseNodes, baseEdges, adjacency } = useMemo(
+  const { baseNodes, baseEdges, depMap } = useMemo(
     () => buildGraph(components),
     [components],
   )
+
+  // Upstream supply chain from the selected component, two hops deep — mirrors
+  // the globe (direct dependencies, then THEIR dependencies). `edges` maps each
+  // edge id to its hop: 1 = direct supply, 2 = upstream supply.
+  const chain = useMemo(() => {
+    if (!selectedId) return null
+    const nodes = new Set<string>([selectedId])
+    const edges = new Map<string, number>()
+    let frontier = [selectedId]
+    for (let hop = 1; hop <= 2; hop++) {
+      const next: string[] = []
+      for (const id of frontier) {
+        for (const dep of depMap.get(id) ?? []) {
+          edges.set(`${dep}=>${id}`, hop)
+          if (!nodes.has(dep)) {
+            nodes.add(dep)
+            next.push(dep)
+          }
+        }
+      }
+      frontier = next
+    }
+    return { nodes, edges }
+  }, [selectedId, depMap])
 
   // Initialize on first load
   useEffect(() => {
@@ -170,14 +203,12 @@ export default function Graph({ components, selectedId, onSelect, highlightedIds
   useEffect(() => {
     if (baseNodes.length === 0) return
 
-    if (selectedId) {
-      const connected = adjacency.get(selectedId) ?? new Set<string>()
-      const relevant = new Set([selectedId, ...connected])
+    if (selectedId && chain) {
       setNodes(
         baseNodes.map((n) => ({
           ...n,
           selected: n.id === selectedId,
-          data: { ...n.data, dimmed: !relevant.has(n.id) },
+          data: { ...n.data, dimmed: !chain.nodes.has(n.id) },
         })),
       )
       return
@@ -196,7 +227,7 @@ export default function Graph({ components, selectedId, onSelect, highlightedIds
 
     // Nothing selected, nothing highlighted: full reset
     setNodes(baseNodes)
-  }, [selectedId, highlightedIds, baseNodes, adjacency, setNodes])
+  }, [selectedId, highlightedIds, baseNodes, chain, setNodes])
 
   // Only edges touching the selected node are ever rendered. They fade in on
   // selection and fade out on deselect, so a just-hidden edge stays mounted
@@ -217,26 +248,39 @@ export default function Graph({ components, selectedId, onSelect, highlightedIds
       return
     }
 
+    // Render every edge in the two-hop upstream chain. Hop 1 (direct supply)
+    // is solid and bright; hop 2 (upstream supply) is dashed and faint — the
+    // same visual hierarchy as the globe's two arc layers.
+    const chainEdges = chain?.edges ?? new Map<string, number>()
     const touching = baseEdges
-      .filter((e) => e.source === selectedId || e.target === selectedId)
-      .map((e) => ({
-        ...e,
-        style: {
-          stroke: '#a1a1aa', // zinc-400
-          strokeWidth: 2,
-          opacity: 0,
-          transition: `opacity ${EDGE_FADE_MS}ms`,
-        },
-      }))
+      .filter((e) => chainEdges.has(e.id))
+      .map((e) => {
+        const direct = chainEdges.get(e.id) === 1
+        return {
+          ...e,
+          style: {
+            stroke: '#a1a1aa', // zinc-400
+            strokeWidth: direct ? 2 : 1.5,
+            strokeDasharray: direct ? undefined : '4 3',
+            opacity: 0,
+            transition: `opacity ${EDGE_FADE_MS}ms`,
+          },
+        }
+      })
 
-    // Mount at opacity 0, then flip to 1 on the next frame so the
-    // transition actually animates instead of snapping in.
+    // Mount at opacity 0, then flip to the target on the next frame so the
+    // transition animates instead of snapping in.
     setEdges(touching)
     const raf = requestAnimationFrame(() => {
-      setEdges((prev) => prev.map((e) => ({ ...e, style: { ...e.style, opacity: 1 } })))
+      setEdges((prev) =>
+        prev.map((e) => ({
+          ...e,
+          style: { ...e.style, opacity: chainEdges.get(e.id) === 1 ? 1 : 0.55 },
+        })),
+      )
     })
     return () => cancelAnimationFrame(raf)
-  }, [selectedId, baseEdges])
+  }, [selectedId, baseEdges, chain])
 
   useEffect(() => {
     return () => {

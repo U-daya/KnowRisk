@@ -510,6 +510,44 @@ def _parse_structured_explanation(raw: str) -> dict[str, str] | None:
     }
 
 
+def _synthetic_explanation(component: dict) -> dict:
+    """Deterministic offline risk brief, used when no LLM endpoint is reachable.
+    Produces the SAME three named fields as the live model (parse_failed False)
+    so the UI renders all three cards normally; source is 'synthetic' so the
+    footer and Q&A badge honestly label it as offline."""
+    name = component["name"]
+    country = component["country"]
+    tier = component["tier"]
+    lead = component.get("lead_time_days", 30)
+    geo = COUNTRY_GEO_RISK.get(country, 0.35)
+
+    drivers = []
+    if component.get("single_source"):
+        drivers.append("a single qualified supplier")
+    if component.get("export_controlled"):
+        drivers.append("export-control exposure")
+    if geo >= 0.5:
+        drivers.append(f"heavy geographic concentration in {country}")
+    elif geo >= 0.3:
+        drivers.append(f"moderate geographic concentration in {country}")
+    driver_text = ", ".join(drivers) if drivers else f"its {country} sourcing"
+    alt = "South Korea or the United States" if country in ("Taiwan", "China", "Japan") else "Japan or Taiwan"
+
+    return {
+        "risk_factor": (f"{name} is a Tier-{tier} component whose primary exposure comes from "
+                        f"{driver_text}, compounded by a {lead}-day supply lead time."),
+        "scenario": (f"A disruption in {country}, such as a natural disaster, capacity shortfall, or "
+                     f"policy action, could halt {name} supply, and the {lead}-day lead time would "
+                     f"slow recovery across downstream production."),
+        "mitigation": (f"Qualify a second source in {alt}, hold six to twelve months of buffer "
+                       f"inventory, and design in alternate parts where technically feasible."),
+        "parse_failed": False,
+        "source": "synthetic",
+        "latency_ms": 0.0,
+        "news_grounded": None,
+    }
+
+
 def _generate_explanation(component: dict, risk_score: float, risk_label: str) -> dict:
     """
     Generate a structured risk explanation with three named fields:
@@ -518,6 +556,11 @@ def _generate_explanation(component: dict, risk_score: float, risk_label: str) -
     parses the result. Retries once if any field is missing. Falls back to
     putting the full text in risk_factor on persistent failure.
     """
+    # No LLM endpoint configured: return a deterministic offline brief immediately
+    # (skips the news-search + cache round-trips that only matter with a live LLM).
+    if not _LLM_BASE_URL:
+        return _synthetic_explanation(component)
+
     global total_queries, cache_hits, news_search_failures, news_empty_results
     import json as _json
     total_queries += 1
@@ -636,17 +679,10 @@ MITIGATION: <one complete sentence, 15-25 words, recommending a concrete mitigat
         return {**fields, "parse_failed": parse_failed, "source": "mi300x", "latency_ms": latency_ms, "news_grounded": news_grounded}
 
     except Exception as e:
-        latency_ms = round((time.time() - t0) * 1000.0, 2)
-        _update_latency_stat(latency_ms)
-        return {
-            "risk_factor": f"[LLM inference failed: {e}]",
-            "scenario": "",
-            "mitigation": "",
-            "parse_failed": True,
-            "source": "synthetic",
-            "latency_ms": latency_ms,
-            "news_grounded": False,
-        }
+        # LLM was configured but the call failed (endpoint down, timeout, etc.):
+        # fall back to the deterministic offline brief instead of an error string.
+        print(f"⚠️ LLM inference failed -> synthetic fallback: {e}")
+        return _synthetic_explanation(component)
 
 # ── Public API ────────────────────────────────────────────────────────────
 
@@ -798,16 +834,19 @@ def answer_query(query: str, context_component_id: str | None = None) -> dict:
             "news_grounded": news_grounded
         }
     except Exception as e:
-        fallback_text = f"Supply chain analysis for {component['name'] if component else 'semiconductor supply chain'} is currently offline."
-        cleaned_fallback = clean_response_text(fallback_text)
-        cleaned_fallback = truncate_to_last_sentence(cleaned_fallback)
+        print(f"⚠️ LLM query failed -> synthetic fallback: {e}")
+        subject = component["name"] if component else "this supply chain"
+        text = (f"Risk in {subject} is driven mainly by geographic concentration, single-source "
+                f"dependencies, export controls, and long lead times. Recommended actions: qualify "
+                f"a second source, hold six to twelve months of safety stock, and continuously "
+                f"monitor geopolitical and logistics signals.")
         latency_ms = round((time.time() - t0) * 1000.0, 2)
         _update_latency_stat(latency_ms)
         return {
-            "text": f"[LLM query failed: {e}] " + cleaned_fallback,
+            "text": text,
             "source": "synthetic",
             "latency_ms": latency_ms,
-            "news_grounded": False
+            "news_grounded": None
         }
 
 def list_components() -> list[dict]:

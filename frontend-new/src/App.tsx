@@ -147,20 +147,32 @@ export default function App() {
           </div>
 
           {/* Graph or Globe — fills remaining center height */}
-          {viewMode === 'graph' ? (
-            <Graph
-              components={mergedComponents}
-              selectedId={selectedId}
-              onSelect={handleSelect}
-              highlightedIds={highlightedIds}
-            />
-          ) : riskDetail ? (
-            <GlobeMap detail={riskDetail} />
-          ) : (
-            <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm uppercase tracking-wide">
-              Select a component to view its supply routes
-            </div>
-          )}
+          <div className="relative flex flex-1 min-h-0">
+            {viewMode === 'graph' ? (
+              <Graph
+                components={mergedComponents}
+                selectedId={selectedId}
+                onSelect={handleSelect}
+                highlightedIds={highlightedIds}
+              />
+            ) : riskDetail ? (
+              <GlobeMap detail={riskDetail} components={mergedComponents} />
+            ) : (
+              <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm uppercase tracking-wide">
+                Select a component to view its supply routes
+              </div>
+            )}
+
+            {/* Loading overlay — shown while a component's risk brief is fetched */}
+            {riskLoading && (
+              <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-zinc-950/70 backdrop-blur-sm">
+                <div className="h-8 w-8 rounded-full border-2 border-zinc-700 border-t-zinc-100 animate-spin" />
+                <div className="text-[10px] uppercase tracking-wide text-zinc-400">
+                  Analyzing supply-chain risk…
+                </div>
+              </div>
+            )}
+          </div>
         </main>
 
         {/* Q&A panel — resizable, default 340px */}

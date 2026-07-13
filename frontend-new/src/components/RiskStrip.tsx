@@ -49,9 +49,16 @@ export default function RiskStrip({ detail, loading }: Props) {
           <div className="text-[10px] uppercase tracking-wide text-zinc-400 mb-1">
             {block.label}
           </div>
-          <p className="text-[12px] leading-snug text-zinc-100">
-            {loading ? '' : (detail?.llm_explanation[block.key] ?? '')}
-          </p>
+          {loading ? (
+            <div className="space-y-1.5 py-0.5" aria-label="Loading">
+              <div className="h-2 w-full rounded bg-zinc-800 animate-pulse" />
+              <div className="h-2 w-4/5 rounded bg-zinc-800 animate-pulse" />
+            </div>
+          ) : (
+            <p className="text-[12px] leading-snug text-zinc-100">
+              {detail?.llm_explanation[block.key] ?? ''}
+            </p>
+          )}
         </div>
       ))}
     </div>
